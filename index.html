@@ -11,6 +11,21 @@
         /* --- Layout --- */
         body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', sans-serif; overflow: hidden; user-select: none; }
         .container { display: flex; height: 100%; }
+
+        /* Селектор DIN-реек */
+.din-rail-selector-v2 {
+    background: rgba(0,0,0,0.2);
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    border: 1px solid #34495e;
+}
+.din-rail-selector-v2 h3 {
+    margin: 0 0 15px 0;
+    color: #ecf0f1;
+    font-size: 1rem;
+    text-align: center;
+}
         
         /* --- Workspace --- */
         #workspace {
@@ -1076,44 +1091,6 @@
 </head>
 <body>
 
-<!-- Модальное окно для настроек DIN рейки v2 -->
-<div class="modal-overlay" id="dinRailModalV2">
-    <div class="modal-content" style="width: 400px;">
-        <h3 style="margin-top:0; color:#333; border:none;">Настройка DIN рейки</h3>
-        
-        <div class="din-rail-options-v2">
-            <div class="option-group">
-                <div class="option-label">Количество столбцов:</div>
-                <div class="option-buttons">
-                    <button class="option-btn" data-columns="1">1 колонна</button>
-                    <button class="option-btn" data-columns="2">2 колонны</button>
-                </div>
-            </div>
-            
-            <div class="option-group" id="rows-group">
-                <div class="option-label">Количество рядов:</div>
-                <div class="option-buttons" id="rows-buttons">
-                    <button class="option-btn" data-rows="1">1 ряд</button>
-                    <button class="option-btn" data-rows="2">2 ряда</button>
-                    <button class="option-btn" data-rows="3">3 ряда</button>
-                </div>
-            </div>
-            
-            <div class="option-group" id="modules-group" style="display: none;">
-                <div class="option-label">Количество модулей в ряду:</div>
-                <div class="option-buttons" id="modules-buttons">
-                    <button class="option-btn" data-modules="12">12 модулей</button>
-                    <button class="option-btn" data-modules="18">18 модулей</button>
-                </div>
-            </div>
-        </div>
-        
-        <div class="modal-actions">
-            <button class="modal-btn cancel" onclick="closeDinRailModalV2()">Отмена</button>
-            <button class="modal-btn confirm" onclick="confirmDinRailSettingsV2()">Создать рейку</button>
-        </div>
-    </div>
-</div>
 
 <!-- Модальное окно для редактирования свойств провода -->
 <div class="modal-overlay" id="wirePropsModal">
@@ -1193,7 +1170,11 @@
 
     
     <div id="sidebar">
-        <h2>Щит 4.10.1.lr</h2>
+        <h2 style="margin: 0px auto; text-align: center;">
+  <img src="logo.jpg" 
+       alt="Логотип" 
+       style="width: 120px; height: auto; display: block; margin: 0 auto;">
+</h2>
         <div class="sidebar-content">
             <!-- Секция слоёв -->
             <div class="layers-section">
@@ -1213,6 +1194,18 @@
                 </div>
             </div>
 
+            <div class="selector-row">
+    <label>
+        <input type="checkbox" id="show-guides-checkbox" checked> Показывать направляющие
+    </label>
+</div>
+<div class="selector-row">
+    <label>Отступ направляющих (px):</label>
+    <input type="number" id="guide-offset-input" value="100" min="20" max="300" step="10" class="v2-select">
+</div>
+            <!-- ===== НОВЫЙ СЕЛЕКТОР DIN-РЕЕК V3 ===== -->
+<div id="din-rail-selector-container"></div>
+
 <!-- ===== НОВЫЙ СЕЛЕКТОР МОДУЛЕЙ V2 ===== -->
             <div id="module-selector-container"></div>
             
@@ -1220,9 +1213,6 @@
             <div class="test-modules-panel">
     <h3>Тест v2</h3>
     <button class="test-btn" onclick="testCreateModuleV2()">Создать тестовый модуль</button>
-    <button class="sidebar-btn" onclick="openDinRailModalV2()">DIN Рейка v2</button>
-    <button class="sidebar-btn" onclick="deleteAllRailsV2()" style="background:#e74c3c;">Удалить все рейки</button>
-    <button class="sidebar-btn" onclick="testInternalConnections()" style="background:#9b59b6;">Проверить связи</button>
 </div>
 
             <!-- Секция избранного -->
@@ -1338,6 +1328,10 @@
     <div class="context-menu-item" onclick="deleteSelectedWireV2()">Удалить провод</div>
     <div class="context-menu-divider"></div>
     <div class="context-menu-item" onclick="showWirePropertiesEditorV2()">Изменить свойства</div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" onclick="setWireRouteLeft()">Маршрут: Левая сторона</div>
+    <div class="context-menu-item" onclick="setWireRouteRight()">Маршрут: Правая сторона</div>
+    <div class="context-menu-item" onclick="setWireRouteAuto()">Маршрут: Авто</div>
 </div>
 
 <!-- Контекстное меню для модулей v2 - замените полностью -->
@@ -1414,416 +1408,345 @@ class DinRailManagerV2 {
     constructor(moduleManager) {
         this.moduleManager = moduleManager;
         this.rails = new Map();
+        this.guideLineManager = new GuideLineManager(workspace, this);
         this.nextId = 0;
-        this.MODULE_WIDTH = 39;
-        this.RAIL_HEIGHT = 105;
-        this.RAIL_GAP = 100;
+        this.MODULE_WIDTH = 39;          // ширина одного модуля в пикселях
+        this.RAIL_HEIGHT = 105;          // высота рейки
+        this.RAIL_GAP = 100;             // вертикальный отступ между рейками
+        this.SIDE_PADDING = 20;          // отступы слева и справа
+        this.RAIL_LEFT_MARGIN = 40;      // отступ от левого края workspace
+        this.draggedRail = null;
+        this.dragOffsetX = 0;
+        this.dragOffsetY = 0;
+    this.isDraggingRail = false;
     }
+
+    // Инициализация перетаскивания (вызвать для каждой рейки после создания)
+enableRailDragging(rail) {
+    rail.style.cursor = 'grab';
+    rail.addEventListener('mousedown', (e) => {
+        // Игнорируем, если клик по кнопке удаления или по модулю
+        if (e.target.classList.contains('btn-delete-rail') || e.target.closest('.module-v2')) return;
+        e.preventDefault();
+        this.startDragRail(e, rail);
+    });
+}
+
+startDragRail(e, rail) {
+    this.draggedRail = rail;
+    const rect = rail.getBoundingClientRect();
+    this.dragOffsetX = e.clientX - rect.left;
+    this.dragOffsetY = e.clientY - rect.top;
+    rail.style.cursor = 'grabbing';
+    rail.style.zIndex = '1000';
     
+    this.onMouseMove = (e) => this.dragRail(e);
+    this.onMouseUp = () => this.stopDragRail();
+    document.addEventListener('mousemove', this.onMouseMove);
+    document.addEventListener('mouseup', this.onMouseUp);
+}
+
+dragRail(e) {
+    if (!this.draggedRail) return;
+    e.preventDefault();
+    const wr = workspace.getBoundingClientRect();
+    let newLeft = e.clientX - wr.left - this.dragOffsetX;
+    let newTop = e.clientY - wr.top + workspace.scrollTop - this.dragOffsetY;
+    
+    // Привязка к сетке (шаг 20px)
+    const gridSize = 20;
+    newLeft = Math.round(newLeft / gridSize) * gridSize;
+    newTop = Math.round(newTop / gridSize) * gridSize;
+    
+    // Ограничения, чтобы рейка не уходила за пределы
+    newLeft = Math.max(0, newLeft);
+    newTop = Math.max(0, newTop);
+    
+    this.draggedRail.style.left = newLeft + 'px';
+    this.draggedRail.style.top = newTop + 'px';
+    
+    // Обновляем провода (если нужно)
+    if (wiringManagerV2) wiringManagerV2.renderWires();
+}
+
+stopDragRail() {
+    if (this.draggedRail) {
+        this.draggedRail.style.cursor = 'grab';
+        this.draggedRail.style.zIndex = '';
+        this.draggedRail = null;
+    }
+    document.removeEventListener('mousemove', this.onMouseMove);
+    document.removeEventListener('mouseup', this.onMouseUp);
+    this.guideLineManager.updateFromRails();
+}
+
     // Проверить, есть ли уже рейки
     hasRails() {
         return document.querySelectorAll('.din-rail-v2').length > 0;
     }
 
-    getModuleWidthUnits(moduleEl) {
-    // Пробуем получить из dataset
-    let widthUnits = parseInt(moduleEl.dataset.widthUnits);
+    // ========== НОВЫЕ ПУБЛИЧНЫЕ МЕТОДЫ ==========
     
-    // Если нет, вычисляем из style.width
-    if (isNaN(widthUnits) || widthUnits === 0) {
-        const widthPx = parseInt(moduleEl.style.width);
-        widthUnits = Math.round(widthPx / this.MODULE_WIDTH);
+    // Добавить одну рейку
+    addSingleRail(modulesCount) {
+        const rail = this._createRailElement(modulesCount);
+        workspace.appendChild(rail);
+        this.rails.set(rail.id, rail);
+        this.enableRailDragging(rail);
+        this.guideLineManager.updateFromRails();
+        return rail;
     }
+
     
-    // Если всё ещё нет, пробуем получить из конфигурации
-    if (isNaN(widthUnits) || widthUnits === 0) {
-        const moduleId = moduleEl.dataset.moduleId;
-        const config = this.moduleManager?.configs.get(moduleId);
-        if (config && config.visual && config.visual.width) {
-            widthUnits = Math.round(config.visual.width / this.MODULE_WIDTH);
-        }
-    }
-    
-    // По умолчанию 1 модуль
-    if (isNaN(widthUnits) || widthUnits === 0) {
-        widthUnits = 1;
-        console.warn(`Could not determine width, defaulting to 1 for module ${moduleEl.id}`);
-    }
-    
-    return widthUnits;
-}
-    
-    // Открыть модальное окно настроек
-    openSettingsModal() {
-        // Проверяем, есть ли уже рейки
-        if (this.hasRails()) {
-            alert('Сначала удалите существующие рейки, чтобы создать новые.');
-            return;
-        }
-        
-        const modal = document.getElementById('dinRailModalV2');
-        if (!modal) {
-            console.error('Modal not found');
-            return;
-        }
-        modal.classList.add('active');
-        
-        document.querySelectorAll('#dinRailModalV2 .option-btn').forEach(btn => {
-            btn.classList.remove('selected');
+
+    // Удалить все рейки
+    deleteAllRails() {
+        const rails = document.querySelectorAll('.din-rail-v2');
+        rails.forEach(rail => {
+            // Открепляем модули
+            const modules = rail.querySelectorAll('.module-v2.on-rail');
+            modules.forEach(mod => {
+                mod.classList.remove('on-rail');
+                delete mod.dataset.railId;
+                delete mod.dataset.slot;
+                // Перемещаем модуль рядом с рейкой
+                const railRect = rail.getBoundingClientRect();
+                const wr = workspace.getBoundingClientRect();
+                mod.style.left = (railRect.right - wr.left + 20) + 'px';
+                mod.style.top = (railRect.top - wr.top + workspace.scrollTop) + 'px';
+                workspace.appendChild(mod);
+            });
+            rail.remove();
+            this.guideLineManager.updateFromRails();
         });
-        
-        document.getElementById('modules-group').style.display = 'none';
-        this.attachModalEvents();
+        this.rails.clear();
+        this.nextId = 0;
+        if (wiringManagerV2) wiringManagerV2.renderWires();
     }
-    
-    // Создать рейку
-    createRail(columns, rows, modulesPerRow) {
-    if (this.hasRails()) {
-        console.warn('Рейки уже существуют');
+
+    // ========== ВНУТРЕННИЕ МЕТОДЫ ==========
+
+    // Создать DOM-элемент рейки
+    _createRailElement(modulesCount) {
+        const railId = `rail_v2_${this.nextId++}`;
+        const rail = document.createElement('div');
+        rail.className = 'din-rail-v2';
+        rail.id = railId;
+        rail.dataset.modulesPerRow = modulesCount;
+        
+        // Ширина: модули + отступы по бокам
+        const totalWidth = modulesCount * this.MODULE_WIDTH + 2 * this.SIDE_PADDING;
+        rail.style.width = totalWidth + 'px';
+        rail.style.height = this.RAIL_HEIGHT + 'px';
+        rail.style.position = 'absolute';
+
+        // Фон рейки
+        const railBg = document.createElement('div');
+        railBg.className = 'rail-bg';
+        railBg.style.backgroundImage = `url('DIN/din_rail.png')`;
+        railBg.style.backgroundRepeat = 'repeat-x';
+        railBg.style.backgroundSize = `${this.MODULE_WIDTH}px auto`;
+        railBg.style.left = this.SIDE_PADDING + 'px';
+        railBg.style.right = this.SIDE_PADDING + 'px';
+        railBg.style.width = `calc(100% - ${2 * this.SIDE_PADDING}px)`;
+        rail.appendChild(railBg);
+
+        // Кнопка удаления (одной рейки)
+        const deleteBtn = document.createElement('div');
+        deleteBtn.className = 'btn-delete-rail';
+        deleteBtn.textContent = '×';
+        deleteBtn.style.position = 'absolute';
+        deleteBtn.style.right = '2px';
+        deleteBtn.style.top = '2px';
+        deleteBtn.style.cursor = 'pointer';
+        deleteBtn.style.color = '#e74c3c';
+        deleteBtn.style.fontWeight = 'bold';
+        deleteBtn.style.fontSize = '16px';
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.deleteRail(railId);
+        };
+        rail.appendChild(deleteBtn);
+
+        // Визуальные разделители слотов (опционально)
+        for (let slot = 1; slot < modulesCount; slot++) {
+            const slotDiv = document.createElement('div');
+            slotDiv.className = 'rail-slot';
+            slotDiv.style.left = (this.SIDE_PADDING + slot * this.MODULE_WIDTH) + 'px';
+            slotDiv.style.width = '1px';
+            rail.appendChild(slotDiv);
+        }
+
+        return rail;
+    }
+
+    // Обновить позиции всех реек (выравнивание по сетке)
+    _updateRailsPositions() {
+        const rails = Array.from(document.querySelectorAll('.din-rail-v2'));
+        if (rails.length === 0) return;
+
+
+        let currentTop = 200; // начальная позиция
+        rails.forEach(rail => {
+            rail.style.left = this.RAIL_LEFT_MARGIN + 'px';
+            rail.style.top = currentTop + 'px';
+            currentTop += this.RAIL_HEIGHT + this.RAIL_GAP;
+        });
+    }
+
+    // Перераспределить модули на всех рейках (вызывается при создании/удалении реек)
+    _rearrangeAllModules() {
+        // Пока оставляем простую реализацию, позже можно улучшить
+        this.rails.forEach(rail => {
+            this._rearrangeModulesOnRail(rail);
+        });
+        if (wiringManagerV2) wiringManagerV2.renderWires();
+    }
+
+    _rearrangeModulesOnRail(rail) {
+        const modules = Array.from(rail.querySelectorAll('.module-v2.on-rail'));
+        const modulesPerRow = parseInt(rail.dataset.modulesPerRow);
+        const railHeight = rail.clientHeight;
+        
+        // Сортируем по ширине (широкие сначала)
+        modules.sort((a, b) => {
+            const wa = parseInt(b.dataset.widthUnits) || 1;
+            const wb = parseInt(a.dataset.widthUnits) || 1;
+            return wb - wa;
+        });
+
+        // Простейшее размещение: последовательно в свободные слоты
+        let occupied = new Array(modulesPerRow).fill(false);
+        modules.forEach(mod => {
+            const width = parseInt(mod.dataset.widthUnits) || 1;
+            let placed = false;
+            for (let start = 0; start <= modulesPerRow - width; start++) {
+                let canPlace = true;
+                for (let i = 0; i < width; i++) {
+                    if (occupied[start + i]) { canPlace = false; break; }
+                }
+                if (canPlace) {
+                    for (let i = 0; i < width; i++) occupied[start + i] = true;
+                    mod.style.left = (this.SIDE_PADDING + start * this.MODULE_WIDTH) + 'px';
+                    mod.dataset.slot = start;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                // Не поместился – открепляем
+                mod.classList.remove('on-rail');
+                delete mod.dataset.railId;
+                delete mod.dataset.slot;
+                const railRect = rail.getBoundingClientRect();
+                const wr = workspace.getBoundingClientRect();
+                mod.style.left = (railRect.right - wr.left + 20) + 'px';
+                mod.style.top = (railRect.top - wr.top + workspace.scrollTop) + 'px';
+                workspace.appendChild(mod);
+            }
+        });
+    }
+
+    // Удалить одну рейку
+    deleteRail(railId) {
+        const rail = document.getElementById(railId);
+        if (!rail) return;
+        if (!confirm('Удалить эту рейку? Модули будут откреплены.')) return;
+
+        const modules = rail.querySelectorAll('.module-v2.on-rail');
+        modules.forEach(mod => {
+            mod.classList.remove('on-rail');
+            delete mod.dataset.railId;
+            delete mod.dataset.slot;
+            const railRect = rail.getBoundingClientRect();
+            const wr = workspace.getBoundingClientRect();
+            mod.style.left = (railRect.right - wr.left + 20) + 'px';
+            mod.style.top = (railRect.top - wr.top + workspace.scrollTop) + 'px';
+            workspace.appendChild(mod);
+        });
+
+        rail.remove();
+        this.rails.delete(railId);
+        this.guideLineManager.updateFromRails();
+        if (wiringManagerV2) wiringManagerV2.renderWires();
+    }
+
+    // ========== МЕТОДЫ ДЛЯ ПРИВЯЗКИ МОДУЛЕЙ (с учётом отступов) ==========
+
+    snapModuleToRail(moduleEl, railEl, targetLeftPx) {
+    const moduleWidthPx = moduleEl.clientWidth;
+    const effectiveWidth = railEl.clientWidth - 2 * this.SIDE_PADDING;
+    if (moduleWidthPx > effectiveWidth) {
+        alert('Модуль шире рейки');
         return false;
     }
     
-    const workspace = document.getElementById('workspace');
-    if (!workspace) return false;
-    
-    const railWidth = modulesPerRow * this.MODULE_WIDTH;
-    const railHeight = this.RAIL_HEIGHT;
-    const railGap = this.RAIL_GAP;
-    
-    const workspaceWidth = workspace.clientWidth;
-    const totalRailsWidth = columns * railWidth + (columns - 1) * 20;
-    const startLeft = (workspaceWidth - totalRailsWidth) / 2;
-    const startTop = 200;
-    
-    // Создаём все рейки (columns * rows штук)
-    for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < columns; col++) {
-            const railId = `rail_v2_${this.nextId++}`;
-            const rail = document.createElement('div');
-            rail.className = 'din-rail-v2';
-            rail.id = railId;
-            rail.dataset.columns = columns;
-            rail.dataset.rows = rows;
-            rail.dataset.modulesPerRow = modulesPerRow;
-            rail.dataset.railIndex = row * columns + col;
-            rail.dataset.column = col;
-            rail.dataset.row = row;
-            
-            rail.style.position = 'absolute';
-            rail.style.width = railWidth + 'px';
-            rail.style.height = railHeight + 'px';
-            rail.style.left = (startLeft + col * (railWidth + 20)) + 'px';
-            rail.style.top = (startTop + row * (railHeight + railGap)) + 'px';
-            
-            // Фон рейки
-            const railBg = document.createElement('div');
-            railBg.className = 'rail-bg';
-            railBg.style.backgroundImage = `url('${this.railImagePath}')`;
-            railBg.style.backgroundRepeat = 'repeat-x';
-            railBg.style.backgroundSize = `${this.MODULE_WIDTH}px auto`;
-            rail.appendChild(railBg);
-            
-            // Кнопка удаления
-            const deleteBtn = document.createElement('div');
-            deleteBtn.className = 'btn-delete-rail';
-            deleteBtn.textContent = '×';
-            deleteBtn.onclick = (e) => {
-                e.stopPropagation();
-                this.deleteAllRails();
-            };
-            rail.appendChild(deleteBtn);
-            
-            // Визуальные слоты
-            for (let slot = 1; slot < modulesPerRow; slot++) {
-                const slotDiv = document.createElement('div');
-                slotDiv.className = 'rail-slot';
-                slotDiv.style.left = (slot * this.MODULE_WIDTH) + 'px';
-                slotDiv.style.width = '1px';
-                rail.appendChild(slotDiv);
-            }
-            
-            workspace.appendChild(rail);
-            this.rails.set(railId, rail);
-        }
-    }
-    
-    this.rearrangeModules();
-    return true;
-}
-    
-    // Удалить все рейки
-    deleteAllRails() {
-        if (!confirm('Удалить все рейки? Модули останутся на рабочей области.')) {
-            return;
-        }
-        
-        const rails = document.querySelectorAll('.din-rail-v2');
-        
-        rails.forEach(rail => {
-            // Открепляем модули от рейки
-            const modules = rail.querySelectorAll('.module-v2.on-rail');
-            modules.forEach(module => {
-                module.classList.remove('on-rail');
-                delete module.dataset.railId;
-                delete module.dataset.slot;
-                
-                // Позиционируем модули рядом с удаляемой рейкой
-                const railRect = rail.getBoundingClientRect();
-                const wr = workspace.getBoundingClientRect();
-                const scrollTop = workspace.scrollTop || 0;
-                module.style.left = (railRect.right - wr.left + 20) + 'px';
-                module.style.top = (railRect.top - wr.top + scrollTop) + 'px';
-                workspace.appendChild(module);
-            });
-            
-            rail.remove();
-        });
-        
-        this.rails.clear();
-        this.nextId = 0;
-        
-        // Перерисовываем провода
-        if (wiringManagerV2) {
-            wiringManagerV2.renderWires();
-        }
-    }
-
-    updateAllRailsPositions() {
-    const rails = document.querySelectorAll('.din-rail-v2');
-    if (rails.length === 0) return;
-    
-    const workspaceWidth = workspace.clientWidth;
-    const columns = parseInt(rails[0].dataset.columns) || 1;
-    const modulesPerRow = parseInt(rails[0].dataset.modulesPerRow);
-    const rows = parseInt(rails[0].dataset.rows) || 1;
-    
-    const railWidth = modulesPerRow * this.MODULE_WIDTH;
-    const totalRailsWidth = columns * railWidth + (columns - 1) * 20;
-    const startLeft = (workspaceWidth - totalRailsWidth) / 2;
-    const startTop = 200;
-    
-    rails.forEach((rail, index) => {
-        const col = index % columns;
-        const row = Math.floor(index / columns);
-        
-        rail.style.left = (startLeft + col * (railWidth + 20)) + 'px';
-        rail.style.top = (startTop + row * (this.RAIL_HEIGHT + this.RAIL_GAP)) + 'px';
-    });
-}
-    
-    // Удалить одну рейку (для совместимости, но вызываем deleteAllRails)
-    deleteRail(railId) {
-        this.deleteAllRails();
-    }
-    
-    
-    attachModalEvents() {
-        const columnsBtns = document.querySelectorAll('#dinRailModalV2 .option-btn[data-columns]');
-        const rowsBtns = document.querySelectorAll('#dinRailModalV2 .option-btn[data-rows]');
-        
-        let selectedColumns = 1;
-        let selectedRows = 1;
-        let selectedModules = 12;
-        
-        columnsBtns.forEach(btn => {
-            btn.onclick = () => {
-                columnsBtns.forEach(b => b.classList.remove('selected'));
-                btn.classList.add('selected');
-                selectedColumns = parseInt(btn.dataset.columns);
-                this.updateModalOptions(selectedColumns, selectedRows, selectedModules);
-            };
-        });
-        
-        rowsBtns.forEach(btn => {
-            btn.onclick = () => {
-                rowsBtns.forEach(b => b.classList.remove('selected'));
-                btn.classList.add('selected');
-                selectedRows = parseInt(btn.dataset.rows);
-                this.updateModalOptions(selectedColumns, selectedRows, selectedModules);
-            };
-        });
-        
-        const btn1 = document.querySelector('#dinRailModalV2 .option-btn[data-columns="1"]');
-        const btnRow1 = document.querySelector('#dinRailModalV2 .option-btn[data-rows="1"]');
-        if (btn1) btn1.classList.add('selected');
-        if (btnRow1) btnRow1.classList.add('selected');
-    }
-    
-    updateModalOptions(columns, rows, currentModules) {
-        const modulesGroup = document.getElementById('modules-group');
-        const rowsGroup = document.getElementById('rows-group');
-        const modulesButtons = document.getElementById('modules-buttons');
-        
-        if (!modulesGroup || !rowsGroup || !modulesButtons) return;
-        
-        if (columns === 2) {
-            modulesGroup.style.display = 'none';
-            rowsGroup.style.display = 'block';
-        } else {
-            if (rows === 1) {
-                modulesGroup.style.display = 'block';
-                modulesButtons.innerHTML = `
-                    <button class="option-btn" data-modules="12">12 модулей</button>
-                    <button class="option-btn" data-modules="18">18 модулей</button>
-                `;
-                
-                const btn12 = modulesButtons.querySelector('[data-modules="12"]');
-                const btn18 = modulesButtons.querySelector('[data-modules="18"]');
-                if (currentModules === 12 && btn12) btn12.classList.add('selected');
-                else if (currentModules === 18 && btn18) btn18.classList.add('selected');
-                else if (btn12) btn12.classList.add('selected');
-                
-                if (btn12) {
-                    btn12.onclick = () => {
-                        modulesButtons.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
-                        btn12.classList.add('selected');
-                    };
-                }
-                if (btn18) {
-                    btn18.onclick = () => {
-                        modulesButtons.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
-                        btn18.classList.add('selected');
-                    };
-                }
-            } else {
-                modulesGroup.style.display = 'none';
-            }
-        }
-    }
-    
-    createRail(columns, rows, modulesPerRow) {
-        const workspace = document.getElementById('workspace');
-        if (!workspace) return;
-        
-        const existingRails = document.querySelectorAll('.din-rail-v2');
-        const railsCount = existingRails.length;
-        
-        const railWidth = modulesPerRow * this.MODULE_WIDTH;
-        const railHeight = this.RAIL_HEIGHT;
-        const railGap = this.RAIL_GAP;
-        
-        const startTop = 300 + Math.floor(railsCount / columns) * (railHeight + railGap);
-        const workspaceWidth = workspace.clientWidth;
-        const totalRailsWidth = columns * railWidth + (columns - 1) * 20;
-        const startLeft = (workspaceWidth - totalRailsWidth) / 2;
-        
-        for (let col = 0; col < columns; col++) {
-            const railId = `rail_v2_${this.nextId++}`;
-            const rail = document.createElement('div');
-            rail.className = 'din-rail-v2';
-            rail.id = railId;
-            rail.dataset.columns = columns;
-            rail.dataset.rows = rows;
-            rail.dataset.modulesPerRow = modulesPerRow;
-            rail.dataset.railIndex = railsCount + col;
-            
-            rail.style.position = 'absolute';
-            rail.style.width = railWidth + 'px';
-            rail.style.height = railHeight + 'px';
-            rail.style.left = (startLeft + col * (railWidth + 20)) + 'px';
-            rail.style.top = startTop + 'px';
-            
-            const railBg = document.createElement('div');
-            railBg.className = 'rail-bg';
-            railBg.style.backgroundImage = `url('DIN/din_rail.png')`;
-            railBg.style.backgroundRepeat = 'repeat-x';
-            railBg.style.backgroundSize = `${this.MODULE_WIDTH}px auto`;
-            rail.appendChild(railBg);
-            
-            const deleteBtn = document.createElement('div');
-            deleteBtn.className = 'btn-delete-rail';
-            deleteBtn.textContent = '×';
-            deleteBtn.onclick = (e) => {
-                e.stopPropagation();
-                this.deleteRail(railId);
-            };
-            rail.appendChild(deleteBtn);
-            
-            for (let slot = 1; slot < modulesPerRow; slot++) {
-                const slotDiv = document.createElement('div');
-                slotDiv.className = 'rail-slot';
-                slotDiv.style.left = (slot * this.MODULE_WIDTH) + 'px';
-                slotDiv.style.width = '1px';
-                rail.appendChild(slotDiv);
-            }
-            
-            workspace.appendChild(rail);
-            this.rails.set(railId, rail);
-        }
-        
-        this.rearrangeModules();
-    }
-    
-    getRailConfig() {
-        return { moduleWidth: this.MODULE_WIDTH };
-    }
-    
-    snapModuleToRail(moduleEl, railEl, targetLeftPx) {
-    const moduleWidthPx = moduleEl.clientWidth;
-    const railWidth = railEl.clientWidth;
-    if (moduleWidthPx > railWidth) { alert('Модуль шире рейки'); return false; }
     let leftPos = this.findNearestFreePosition(railEl, targetLeftPx, moduleWidthPx);
-    if (leftPos === -1) { alert('Нет свободного места на рейке'); return false; }
+    if (leftPos === -1) {
+        alert('Нет свободного места на рейке');
+        return false;
+    }
+    
+    // Освобождаем старое место, если модуль уже был на рейке
+    if (moduleEl.dataset.railId && moduleEl.dataset.railId !== railEl.id) {
+        // Просто удаляем из старой рейки, занятость определяется через DOM
+    }
+    
     moduleEl.style.left = leftPos + 'px';
-    const railHeight = railEl.clientHeight;
-    const moduleHeight = moduleEl.clientHeight;
-    const topOffset = (railHeight - moduleHeight) / 2;
+    const topOffset = (railEl.clientHeight - moduleEl.clientHeight) / 2;
     moduleEl.style.top = topOffset + 'px';
     moduleEl.classList.add('on-rail');
     moduleEl.dataset.railId = railEl.id;
-    moduleEl.dataset.leftPx = leftPos;
+    moduleEl.dataset.leftPx = leftPos; // сохраняем для информации
+    
     railEl.appendChild(moduleEl);
     this.clearHighlight();
     if (wiringManagerV2) wiringManagerV2.renderWires();
     return true;
 }
-    
+
     findNearestRail(moduleEl, clientX, clientY, highlight = true) {
     const rect = moduleEl.getBoundingClientRect();
     const moduleX = clientX !== undefined ? clientX : rect.left + rect.width / 2;
     const moduleY = clientY !== undefined ? clientY : rect.top + rect.height / 2;
     const moduleWidthPx = moduleEl.clientWidth;
-    if (highlight) {
-        document.querySelectorAll('.din-rail-v2').forEach(rail => {
-            rail.classList.remove('rail-highlight');
-            rail.querySelectorAll('.rail-slot-highlight').forEach(slot => slot.remove());
-        });
-    }
-    let nearestRail = null, nearestLeftPx = -1, minDistance = Infinity;
+    
+    if (highlight) this.clearHighlight();
+    
+    let nearestRail = null;
+    let nearestLeftPx = -1;
+    let minDistance = Infinity;
+    
     document.querySelectorAll('.din-rail-v2').forEach(rail => {
         const railRect = rail.getBoundingClientRect();
-        const railLeft = railRect.left, railRight = railRect.right;
         const railCenterY = railRect.top + railRect.height / 2;
-        const horizontalDistance = Math.min(
-            Math.abs(moduleX - railLeft), Math.abs(moduleX - railRight),
-            (moduleX > railLeft && moduleX < railRight) ? 0 : Infinity
-        );
         const verticalDistance = Math.abs(moduleY - railCenterY);
-        const horizontalThreshold = moduleWidthPx / 2 + 50;
-        const verticalThreshold = moduleEl.clientHeight / 2 + 30;
-        if (horizontalDistance < horizontalThreshold && verticalDistance < verticalThreshold) {
-            let targetLeft = moduleX - railLeft;
-            targetLeft = Math.max(0, Math.min(targetLeft, rail.clientWidth - moduleWidthPx));
-            let bestPos = this.findNearestFreePosition(rail, targetLeft, moduleWidthPx);
-            if (bestPos !== -1) {
-                const distance = Math.abs(targetLeft - bestPos) + verticalDistance;
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    nearestRail = rail;
-                    nearestLeftPx = bestPos;
-                }
+        const verticalThreshold = moduleEl.clientHeight / 2 + 50;
+        if (verticalDistance > verticalThreshold) return;
+        
+        const effectiveLeft = railRect.left + this.SIDE_PADDING;
+        const effectiveRight = railRect.right - this.SIDE_PADDING;
+        let targetLeft = moduleX - effectiveLeft;
+        targetLeft = Math.max(0, Math.min(targetLeft, effectiveRight - effectiveLeft - moduleWidthPx));
+        
+        let bestPos = this.findNearestFreePosition(rail, targetLeft, moduleWidthPx);
+        if (bestPos !== -1) {
+            const distance = Math.abs(targetLeft - bestPos) + verticalDistance;
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearestRail = rail;
+                nearestLeftPx = bestPos;
             }
         }
     });
+    
     if (highlight && nearestRail && nearestLeftPx !== -1) {
         nearestRail.classList.add('rail-highlight');
         this.highlightSlotPx(nearestRail, nearestLeftPx, moduleWidthPx);
     }
+    
     return nearestRail ? { rail: nearestRail, leftPx: nearestLeftPx } : null;
 }
-
-
-// Подсветка слота на рейке
 highlightSlotPx(rail, leftPx, widthPx) {
     rail.querySelectorAll('.rail-slot-highlight').forEach(el => el.remove());
     const highlightDiv = document.createElement('div');
@@ -1833,266 +1756,199 @@ highlightSlotPx(rail, leftPx, widthPx) {
     highlightDiv.style.top = '0';
     highlightDiv.style.width = widthPx + 'px';
     highlightDiv.style.height = '100%';
-    highlightDiv.style.borderRadius = '3px';
+    highlightDiv.style.backgroundColor = 'rgba(46, 204, 113, 0.4)';
+    highlightDiv.style.border = '2px solid #27ae60';
+    highlightDiv.style.boxShadow = '0 0 8px rgba(46, 204, 113, 0.5)';
     highlightDiv.style.pointerEvents = 'none';
     highlightDiv.style.zIndex = '15';
-    const isFree = this.canPlaceModule(rail, leftPx, widthPx);
-    if (isFree) {
-        highlightDiv.style.backgroundColor = 'rgba(46, 204, 113, 0.4)';
-        highlightDiv.style.border = '2px solid #27ae60';
-        highlightDiv.style.boxShadow = '0 0 8px rgba(46, 204, 113, 0.5)';
-    } else {
-        highlightDiv.style.backgroundColor = 'rgba(231, 76, 60, 0.4)';
-        highlightDiv.style.border = '2px solid #e74c3c';
-        highlightDiv.style.boxShadow = '0 0 8px rgba(231, 76, 60, 0.5)';
-    }
     rail.appendChild(highlightDiv);
 }
 
-// Снять подсветку со всех реек
-clearHighlight() {
-    document.querySelectorAll('.din-rail-v2').forEach(rail => {
-        rail.classList.remove('rail-highlight');
-        rail.querySelectorAll('.rail-slot-highlight').forEach(slot => slot.remove());
+rearrangeModules() {
+    const rails = document.querySelectorAll('.din-rail-v2');
+    rails.forEach(rail => {
+        const modules = Array.from(rail.querySelectorAll('.module-v2.on-rail'));
+        // Сортируем по ширине (широкие вперёд) для лучшей упаковки
+        modules.sort((a, b) => b.clientWidth - a.clientWidth);
+        
+        // Сбрасываем позиции
+        modules.forEach(mod => { mod.style.left = '0px'; });
+        
+        const railHeight = rail.clientHeight;
+        const minX = this.SIDE_PADDING;
+        const maxX = rail.clientWidth - this.SIDE_PADDING;
+        let placedModules = [];
+        
+        modules.forEach(mod => {
+            const width = mod.clientWidth;
+            let placed = false;
+            // Ищем первое подходящее место
+            for (let candidate = minX; candidate <= maxX - width; candidate++) {
+                let collision = false;
+                for (let placedMod of placedModules) {
+                    const placedLeft = parseFloat(placedMod.style.left);
+                    const placedRight = placedLeft + placedMod.clientWidth;
+                    if (candidate < placedRight && candidate + width > placedLeft) {
+                        collision = true;
+                        candidate = placedRight; // прыгаем сразу за этот модуль
+                        break;
+                    }
+                }
+                if (!collision) {
+                    mod.style.left = candidate + 'px';
+                    const topOffset = (railHeight - mod.clientHeight) / 2;
+                    mod.style.top = topOffset + 'px';
+                    mod.dataset.leftPx = candidate;
+                    placedModules.push(mod);
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                // Не поместился – открепляем
+                mod.classList.remove('on-rail');
+                delete mod.dataset.railId;
+                delete mod.dataset.leftPx;
+                const railRect = rail.getBoundingClientRect();
+                const wr = workspace.getBoundingClientRect();
+                mod.style.left = (railRect.right - wr.left + 20) + 'px';
+                mod.style.top = (railRect.top - wr.top + workspace.scrollTop) + 'px';
+                workspace.appendChild(mod);
+            }
+        });
     });
+    if (wiringManagerV2) wiringManagerV2.renderWires();
 }
-    
-// Проверить коллизию с другими модулями
-checkCollision(rail, slot, currentModule) {
-    const moduleWidth = parseInt(currentModule.dataset.widthUnits) || 1;
-    const currentId = currentModule.id;
-    
-    const existingModules = rail.querySelectorAll('.module-v2.on-rail');
-    
-    for (let mod of existingModules) {
-        if (mod.id === currentId) continue;
-        
-        const modSlot = parseInt(mod.dataset.slot);
-        const modWidth = parseInt(mod.dataset.widthUnits) || 1;
-        
-        // Проверяем пересечение интервалов
-        const start1 = slot;
-        const end1 = slot + moduleWidth;
-        const start2 = modSlot;
-        const end2 = modSlot + modWidth;
-        
-        if (start1 < end2 && end1 > start2) {
-            return true;
-        }
+
+    clearHighlight() {
+        document.querySelectorAll('.din-rail-v2').forEach(rail => {
+            rail.classList.remove('rail-highlight');
+            rail.querySelectorAll('.rail-slot-highlight').forEach(s => s.remove());
+        });
     }
-    return false;
-}
 
-// Получить все занятые слоты на рейке
-getOccupiedSlots(rail) {
-    const occupied = [];
-    const modules = rail.querySelectorAll('.module-v2.on-rail');
-    
-    modules.forEach(module => {
-        const slot = parseInt(module.dataset.slot);
-        const width = parseInt(module.dataset.widthUnits) || 1;
-        
-        
-        for (let i = 0; i < width; i++) {
-            occupied.push(slot + i);
+    // ========== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ==========
+
+    _canPlaceModuleAtSlot(rail, startSlot, widthUnits) {
+        const modules = rail.querySelectorAll('.module-v2.on-rail');
+        for (let mod of modules) {
+            const modSlot = parseInt(mod.dataset.slot);
+            const modWidth = parseInt(mod.dataset.widthUnits) || 1;
+            if (startSlot < modSlot + modWidth && startSlot + widthUnits > modSlot) {
+                return false;
+            }
         }
-    });
+        return true;
+    }
+
+    _occupySlots(rail, startSlot, widthUnits) {
+        // Ничего не делаем, занятость определяется через DOM
+    }
+
+    _freeSlots(rail, startSlot, widthUnits) {
+        // Ничего не делаем
+    }
+
+    _highlightSlot(rail, slot, widthUnits) {
+        rail.querySelectorAll('.rail-slot-highlight').forEach(el => el.remove());
+        const highlightDiv = document.createElement('div');
+        highlightDiv.className = 'rail-slot-highlight';
+        highlightDiv.style.position = 'absolute';
+        highlightDiv.style.left = (this.SIDE_PADDING + slot * this.MODULE_WIDTH) + 'px';
+        highlightDiv.style.top = '0';
+        highlightDiv.style.width = (widthUnits * this.MODULE_WIDTH) + 'px';
+        highlightDiv.style.height = '100%';
+        highlightDiv.style.backgroundColor = 'rgba(46, 204, 113, 0.4)';
+        highlightDiv.style.border = '2px solid #27ae60';
+        highlightDiv.style.boxShadow = '0 0 8px rgba(46, 204, 113, 0.5)';
+        highlightDiv.style.pointerEvents = 'none';
+        highlightDiv.style.zIndex = '15';
+        rail.appendChild(highlightDiv);
+    }
+
+    // Заглушки для совместимости
+    getModuleWidthUnits(moduleEl) {
+        return parseInt(moduleEl.dataset.widthUnits) || 1;
+    }
+    rearrangeModules() {
+        this._rearrangeAllModules();
+    }
+    canPlaceModule(rail, leftPx, moduleWidthPx) {
+    const minX = this.SIDE_PADDING;
+    const maxX = rail.clientWidth - this.SIDE_PADDING - moduleWidthPx;
+    if (leftPx < minX || leftPx > maxX) return false;
     
-    return occupied;
-}
-
-// Получить количество свободных ячеек на рейке
-getFreeSlotsCount(rail) {
-    const modulesPerRow = parseInt(rail.dataset.modulesPerRow);
-    const occupied = this.getOccupiedSlots(rail);
-    return modulesPerRow - occupied.length;
-}
-
-// Проверить, можно ли добавить модуль на рейку
-canAddModuleToRail(rail, moduleWidth) {
-    const freeSlots = this.getFreeSlotsCount(rail);
-    return freeSlots >= moduleWidth;
-}
-
-// Проверить, можно ли разместить модуль в указанном слоте
-canPlaceModule(rail, leftPx, moduleWidthPx) {
-    const railWidth = rail.clientWidth;
-    if (leftPx < 0 || leftPx + moduleWidthPx > railWidth) return false;
     const modules = rail.querySelectorAll('.module-v2.on-rail');
+    const newLeft = leftPx;
+    const newRight = leftPx + moduleWidthPx;
+    
     for (let mod of modules) {
-        const modLeft = parseFloat(mod.style.left);
+        const modLeft = parseFloat(mod.style.left) || 0;
         const modRight = modLeft + mod.clientWidth;
-        const newLeft = leftPx;
-        const newRight = leftPx + moduleWidthPx;
-        if (newLeft < modRight && newRight > modLeft) return false;
+        if (newLeft < modRight && newRight > modLeft) {
+            return false; // пересечение
+        }
     }
     return true;
 }
-
-// Проверить, занята ли конкретная ячейка
-isSlotOccupied(rail, slot) {
-    const modules = rail.querySelectorAll('.module-v2.on-rail');
+    findNearestFreePosition(rail, targetLeftPx, moduleWidthPx) {
+    const minX = this.SIDE_PADDING;
+    const maxX = rail.clientWidth - this.SIDE_PADDING - moduleWidthPx;
+    targetLeftPx = Math.min(Math.max(targetLeftPx, minX), maxX);
     
-    for (let mod of modules) {
-        const modSlot = parseInt(mod.dataset.slot);
-        const modWidth = parseInt(mod.dataset.widthUnits) || 1;
-        
-        if (slot >= modSlot && slot < modSlot + modWidth) {
-            return true;
-        }
+    // Если в целевой позиции свободно, возвращаем её
+    if (this.canPlaceModule(rail, targetLeftPx, moduleWidthPx)) {
+        return targetLeftPx;
     }
-    return false;
-}
-
-// Найти ближайший свободный слот
-findNearestFreePosition(rail, targetLeftPx, moduleWidthPx) {
-    const railWidth = rail.clientWidth;
+    
+    // Собираем занятые интервалы
     const modules = rail.querySelectorAll('.module-v2.on-rail');
     let occupied = [];
     modules.forEach(mod => {
-        const left = parseFloat(mod.style.left);
+        const left = parseFloat(mod.style.left) || 0;
         const right = left + mod.clientWidth;
         occupied.push({ left, right });
     });
     occupied.sort((a, b) => a.left - b.left);
-    let candidate = 0;
+    
+    // Проверяем промежутки между модулями
+    let bestPos = -1;
+    let bestDist = Infinity;
+    
+    // Начало рабочей области
+    let candidate = minX;
     for (let occ of occupied) {
-        if (candidate + moduleWidthPx <= occ.left) return candidate;
+        if (candidate + moduleWidthPx <= occ.left) {
+            const dist = Math.abs(candidate - targetLeftPx);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestPos = candidate;
+            }
+        }
         candidate = occ.right;
     }
-    if (candidate + moduleWidthPx <= railWidth) return candidate;
-    if (this.canPlaceModule(rail, targetLeftPx, moduleWidthPx)) return targetLeftPx;
-    let bestPos = -1, bestDist = Infinity;
-    for (let x = 0; x <= railWidth - moduleWidthPx; x++) {
-        if (this.canPlaceModule(rail, x, moduleWidthPx)) {
-            const dist = Math.abs(x - targetLeftPx);
-            if (dist < bestDist) { bestDist = dist; bestPos = x; if (bestDist === 0) break; }
+    // Конец рабочей области
+    if (candidate + moduleWidthPx <= maxX + moduleWidthPx) {
+        const dist = Math.abs(candidate - targetLeftPx);
+        if (dist < bestDist) {
+            bestPos = candidate;
+        }
+    }
+    
+    // Если всё ещё не нашли, пробуем сдвинуть существующие (пока не реализовано)
+    // Возвращаем хотя бы что-то в пределах
+    if (bestPos === -1) {
+        // Можно попытаться найти любое свободное место, перебирая с шагом 1px
+        for (let x = minX; x <= maxX; x++) {
+            if (this.canPlaceModule(rail, x, moduleWidthPx)) {
+                return x;
+            }
         }
     }
     return bestPos;
 }
-    
-    rearrangeModules() {
-    const rails = document.querySelectorAll('.din-rail-v2');
-    
-    rails.forEach(rail => {
-        const modules = Array.from(rail.querySelectorAll('.module-v2.on-rail'));
-        const modulesPerRow = parseInt(rail.dataset.modulesPerRow);
-        const railHeight = rail.clientHeight;
-        
-        // Сортируем модули по ширине (сначала широкие)
-        modules.sort((a, b) => {
-            const aWidth = parseInt(b.dataset.widthUnits) || 1;
-            const bWidth = parseInt(a.dataset.widthUnits) || 1;
-            return bWidth - aWidth;
-        });
-        
-        // Сбрасываем позиции
-        modules.forEach(module => {
-            delete module.dataset.slot;
-        });
-        
-        // Перераспределяем
-        let currentSlot = 0;
-        modules.forEach(module => {
-            const moduleWidth = parseInt(module.dataset.widthUnits) || 1;
-            const moduleHeight = module.clientHeight;
-            
-            // Находим свободный слот
-            while (!this.canPlaceModule(rail, currentSlot, moduleWidth) && currentSlot + moduleWidth <= modulesPerRow) {
-                currentSlot++;
-            }
-            
-            if (currentSlot + moduleWidth <= modulesPerRow && this.canPlaceModule(rail, currentSlot, moduleWidth)) {
-                module.style.left = (currentSlot * this.MODULE_WIDTH) + 'px';
-                // Центрируем по высоте
-                const topOffset = (railHeight - moduleHeight) / 2;
-                module.style.top = topOffset + 'px';
-                module.dataset.slot = currentSlot;
-                currentSlot += moduleWidth;
-            } else {
-                // Нет места - переносим
-                module.style.position = 'absolute';
-                module.classList.remove('on-rail');
-                delete module.dataset.railId;
-                delete module.dataset.slot;
-                
-                const railRect = rail.getBoundingClientRect();
-                const wr = workspace.getBoundingClientRect();
-                module.style.left = (railRect.right - wr.left + 20) + 'px';
-                module.style.top = (railRect.top - wr.top + workspace.scrollTop) + 'px';
-                workspace.appendChild(module);
-            }
-        });
-    });
-    
-    if (wiringManagerV2) {
-        wiringManagerV2.renderWires();
-    }
-}
-    
-    deleteRail(railId) {
-        const rail = document.getElementById(railId);
-        if (!rail) return;
-        
-        if (confirm('Удалить рейку? Модули останутся на рабочей области.')) {
-            const modules = rail.querySelectorAll('.module-v2.on-rail');
-            modules.forEach(module => {
-                module.classList.remove('on-rail');
-                delete module.dataset.railId;
-                delete module.dataset.slot;
-                
-                const railRect = rail.getBoundingClientRect();
-                const wr = workspace.getBoundingClientRect();
-                const scrollTop = workspace.scrollTop || 0;
-                module.style.left = (railRect.right - wr.left + 20) + 'px';
-                module.style.top = (railRect.top - wr.top + scrollTop) + 'px';
-                workspace.appendChild(module);
-            });
-            
-            rail.remove();
-            this.rails.delete(railId);
-            
-            if (wiringManagerV2) {
-                wiringManagerV2.renderWires();
-            }
-        }
-    }
-    
-    updateRailsPositions() {
-        const rails = document.querySelectorAll('.din-rail-v2');
-        const railHeight = this.RAIL_HEIGHT;
-        const railGap = this.RAIL_GAP;
-        
-        const columnsMap = new Map();
-        rails.forEach(rail => {
-            const left = parseInt(rail.style.left);
-            const colKey = Math.round(left);
-            if (!columnsMap.has(colKey)) columnsMap.set(colKey, []);
-            columnsMap.get(colKey).push(rail);
-        });
-        
-        columnsMap.forEach(columnRails => {
-            columnRails.sort((a, b) => {
-                const aTop = parseInt(a.style.top);
-                const bTop = parseInt(b.style.top);
-                return aTop - bTop;
-            });
-            
-            let currentTop = 200;
-            columnRails.forEach(rail => {
-                rail.style.top = currentTop + 'px';
-                currentTop += railHeight + railGap;
-            });
-        });
-    }
 }
 
-function deleteAllRailsV2() {
-    if (dinRailManagerV2) {
-        dinRailManagerV2.deleteAllRails();
-    }
-}
 
 // Глобальные функции
 
@@ -2107,51 +1963,51 @@ function clearRailHighlight() {
         dinRailManagerV2.clearHighlight();
     }
 }
-function openDinRailModalV2() {
-    if (typeof dinRailManagerV2 !== 'undefined' && dinRailManagerV2) {
-        dinRailManagerV2.openSettingsModal();
-    } else {
-        console.error('dinRailManagerV2 not initialized');
-        alert('Система реек еще не инициализирована. Пожалуйста, перезагрузите страницу.');
+function setWireRouteLeft() {
+    if (!selectedWireIdV2) return;
+    const wire = wiringManagerV2.wires.find(w => w.id === selectedWireIdV2);
+    if (!wire) return;
+    
+    wire.vGuideSide = 'left';
+    const fromEl = document.getElementById(wire.from);
+    const toEl = document.getElementById(wire.to);
+    if (fromEl && toEl) {
+        wire.breakpoints = wiringManagerV2.calculateBreakpoints(fromEl, toEl, wire);
     }
+    wiringManagerV2.renderWires();
+    document.getElementById('wireContextMenu').classList.remove('active');
 }
 
-function closeDinRailModalV2() {
-    const modal = document.getElementById('dinRailModalV2');
-    if (modal) modal.classList.remove('active');
+function setWireRouteRight() {
+    if (!selectedWireIdV2) return;
+    const wire = wiringManagerV2.wires.find(w => w.id === selectedWireIdV2);
+    if (!wire) return;
+    
+    wire.vGuideSide = 'right';
+    const fromEl = document.getElementById(wire.from);
+    const toEl = document.getElementById(wire.to);
+    if (fromEl && toEl) {
+        wire.breakpoints = wiringManagerV2.calculateBreakpoints(fromEl, toEl, wire);
+    }
+    wiringManagerV2.renderWires();
+    document.getElementById('wireContextMenu').classList.remove('active');
 }
 
-function confirmDinRailSettingsV2() {
-    const modal = document.getElementById('dinRailModalV2');
+function setWireRouteAuto() {
+    if (!selectedWireIdV2) return;
+    const wire = wiringManagerV2.wires.find(w => w.id === selectedWireIdV2);
+    if (!wire) return;
     
-    // Проверяем, нет ли уже реек
-    if (dinRailManagerV2.hasRails()) {
-        alert('Сначала удалите существующие рейки.');
-        closeDinRailModalV2();
-        return;
+    wire.vGuideSide = 'nearest';
+    const fromEl = document.getElementById(wire.from);
+    const toEl = document.getElementById(wire.to);
+    if (fromEl && toEl) {
+        wire.breakpoints = wiringManagerV2.calculateBreakpoints(fromEl, toEl, wire);
     }
-    
-    const selectedColumns = parseInt(document.querySelector('#dinRailModalV2 .option-btn[data-columns].selected')?.dataset.columns || 1);
-    const selectedRows = parseInt(document.querySelector('#dinRailModalV2 .option-btn[data-rows].selected')?.dataset.rows || 1);
-    
-    let modulesPerRow = 12;
-    
-    if (selectedColumns === 2) {
-        modulesPerRow = 15;
-    } else if (selectedColumns === 1 && selectedRows === 1) {
-        const selectedModules = document.querySelector('#dinRailModalV2 .option-btn[data-modules].selected');
-        if (selectedModules) {
-            modulesPerRow = parseInt(selectedModules.dataset.modules);
-        }
-    }
-    
-    // Создаём рейки
-    for (let i = 0; i < selectedRows; i++) {
-        dinRailManagerV2.createRail(selectedColumns, selectedRows, modulesPerRow);
-    }
-    
-    closeDinRailModalV2();
+    wiringManagerV2.renderWires();
+    document.getElementById('wireContextMenu').classList.remove('active');
 }
+
 // ===================== ВЫДЕЛЕНИЕ МОДУЛЕЙ V2 =====================
 
 // Начать выделение
@@ -4845,10 +4701,10 @@ const MODULE_DATABASE_V2 = {
                 },
 
                 parameters: {
-                    poles: { type: 'select', label: 'Полюсы', options: [1, 2, 3, 4], default: 1 },
-                    amps: { type: 'select', label: 'Номинальный ток', options: ['6А'], default: '6А' },
-                    shortCircuit: { type: 'select', label: 'Отключающая способность, кА', options: ['4.5кА', '6кА', '10кА'], default: '4.5кА' },
-                    characteristic: { type: 'select', label: 'Характеристика', options: ['B', 'C', 'D'], default: 'C' }
+                    poles: { type: 'select', label: 'Полюсы', options: [1, 2, 3, 4]},
+                    amps: { type: 'select', label: 'Номинальный ток', options: ['6А','611А']},
+                    shortCircuit: { type: 'select', label: 'Отключающая способность, кА', options: ['4.5кА', '6кА', '10кА']},
+                    characteristic: { type: 'select', label: 'Характеристика', options: ['B', 'C', 'D']}
                 },
 
                 variants: {
@@ -5437,10 +5293,8 @@ handleTerminalClick(termId, e) {
         wm.completeWiringFromClick(document.getElementById(termId), e);
     } else {
         // Если нет активной проводки - начинаем новую ТОЛЬКО с правильных клемм
-        if (type === 'out' || type === 'in-src' || type === 'bus') {
             wm.startWiring(termId, e);
-        } else {
-        }
+
     }
 }
     
@@ -5494,7 +5348,7 @@ startDragModule(e, moduleId) {
     const onMouseUp = () => {
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
-    if (dinRailManagerV2) {
+     if (dinRailManagerV2) {
         const result = dinRailManagerV2.findNearestRail(moduleEl, undefined, undefined, false);
         if (result) {
             dinRailManagerV2.snapModuleToRail(moduleEl, result.rail, result.leftPx);
@@ -5737,64 +5591,96 @@ class WiringManagerV2 {
     this.dragPivot = this.dragPivot.bind(this);
     this.stopDragPivot = this.stopDragPivot.bind(this);
 }
+// Преобразует массив точек в путь с закруглёнными углами (радиус radius)
+getRoundedPath(points, radius = 80) {
+    if (!points || points.length < 2) return '';
+    if (points.length === 2) {
+        return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+    }
+
+    let d = `M ${points[0].x} ${points[0].y}`;
+    
+    for (let i = 1; i < points.length - 1; i++) {
+        const prev = points[i - 1];
+        const curr = points[i];
+        const next = points[i + 1];
+        
+        // Векторы входящего и исходящего сегментов
+        const dx1 = curr.x - prev.x;
+        const dy1 = curr.y - prev.y;
+        const dx2 = next.x - curr.x;
+        const dy2 = next.y - curr.y;
+        
+        const len1 = Math.hypot(dx1, dy1);
+        const len2 = Math.hypot(dx2, dy2);
+        if (len1 === 0 || len2 === 0) continue;
+        
+        // Нормализованные направления
+        const nx1 = dx1 / len1;
+        const ny1 = dy1 / len1;
+        const nx2 = dx2 / len2;
+        const ny2 = dy2 / len2;
+        
+        // Максимально допустимый радиус для этого угла (не более половины длины сегментов)
+        const maxR = Math.min(len1 / 2, len2 / 2);
+        const r = Math.min(radius, maxR);
+        
+        // Точки начала и конца скругления на сегментах
+        const startX = curr.x - nx1 * r;
+        const startY = curr.y - ny1 * r;
+        const endX = curr.x + nx2 * r;
+        const endY = curr.y + ny2 * r;
+        
+        // Рисуем линию до начала скругления
+        d += ` L ${startX} ${startY}`;
+        
+        // Определяем sweep-flag (направление дуги)
+        const cross = nx1 * ny2 - ny1 * nx2;
+        const sweepFlag = cross > 0 ? 1 : 0;
+        
+        // Добавляем дугу к конечной точке скругления
+        d += ` A ${r} ${r} 0 0 ${sweepFlag} ${endX} ${endY}`;
+    }
+    
+    // Добавляем последнюю точку
+    d += ` L ${points[points.length - 1].x} ${points[points.length - 1].y}`;
+    return d;
+}
 // Контрольные точки для редактирования изгиба (адаптировано из старой версии)
 createControlPointsFromOld(wire, fromEl, toEl) {
     const svg = document.getElementById('wires-layer');
-    
-    // Удаляем старые контрольные точки для этого провода
     document.querySelectorAll(`circle[data-wire-id="${wire.id}"]`).forEach(c => c.remove());
+
+    const points = wire.breakpoints.points;
+    if (!points || points.length < 2) return;
+
+    const isFromSupply = wire.breakpoints.type === 'supply';
     
-    const wr = workspace.getBoundingClientRect();
-    const r1 = fromEl.getBoundingClientRect();
-    const r2 = toEl.getBoundingClientRect();
-    
-    const x1 = r1.left + r1.width/2 - wr.left;
-    const y1 = r1.top + r1.height/2 - wr.top + workspace.scrollTop;
-    const x2 = r2.left + r2.width/2 - wr.left;
-    const y2 = r2.top + r2.height/2 - wr.top + workspace.scrollTop;
-    
-    const isFromSupply = fromEl.classList.contains('supply-terminal') || fromEl.dataset.type === 'in-src';
-    
-    const createControlPoint = (cx, cy, index, type, tooltip) => {
+    // Создаём контрольные точки для всех промежуточных точек (кроме первой и последней)
+    for (let i = 1; i < points.length - 1; i++) {
+        const point = points[i];
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('cx', cx);
-        circle.setAttribute('cy', cy);
+        circle.setAttribute('cx', point.x);
+        circle.setAttribute('cy', point.y);
         circle.setAttribute('r', isFromSupply ? 4 : 3);
+        
+        // Определяем тип пивота: для supply это всегда corner, для module – зависит от положения
+        let type = 'p-corner';
+        if (!isFromSupply) {
+            if (i === 1 || i === points.length - 2) type = 'p-vertical';
+        }
         circle.classList.add('pivot', type);
         circle.dataset.wireId = wire.id;
-        circle.dataset.pointIndex = index;
-        circle.dataset.tooltip = tooltip;
-        
+        circle.dataset.pointIndex = i;
+        circle.dataset.tooltip = 'Перетащите для изменения маршрута';
+
         circle.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             e.preventDefault();
-            this.startDragPivotOld(e, wire.id, index);
+            this.startDragPivotOld(e, wire.id, i);
         });
-        
-        
+
         svg.appendChild(circle);
-    };
-    
-    if (isFromSupply) {
-        // Для главного ввода - только одна контрольная точка
-        if (wire.breakpoints && wire.breakpoints.points[1]) {
-            createControlPoint(
-                wire.breakpoints.points[1].x, 
-                wire.breakpoints.points[1].y, 
-                1, 
-                'p-corner', 
-                'Переместить точку перехода'
-            );
-        }
-    } else {
-        // Для модуль-модуль - четыре контрольные точки
-        if (wire.breakpoints) {
-            const points = wire.breakpoints.points;
-            createControlPoint(points[1].x, points[1].y, 1, 'p-vertical', 'Переместить вертикаль от источника');
-            createControlPoint(points[2].x, points[2].y, 2, 'p-corner', 'Переместить угол (источник)');
-            createControlPoint(points[3].x, points[3].y, 3, 'p-corner', 'Переместить угол (назначение)');
-            createControlPoint(points[4].x, points[4].y, 4, 'p-vertical', 'Переместить вертикаль к назначению');
-        }
     }
 }
 // Обновить цвет клеммы
@@ -5856,13 +5742,6 @@ startWiring(terminalId, e) {
     const type = terminal.dataset.type;
     
     
-    // Проверка уже выполнена в handleTerminalClick, но оставим для надежности
-    if (this.currentMode === 'wire') {
-        const validStart = (type === 'out' || type === 'in-src' || type === 'bus');
-        if (!validStart) {
-            return false;
-        }
-    }
 
     this.wiringStartTerminal = terminal;
     terminal.classList.add('connected', 'wiring-start');
@@ -5883,8 +5762,7 @@ startWiring(terminalId, e) {
 // Подсветка доступных целей
 highlightValidTargets(sourceTerminal) {
     const sourceTag = sourceTerminal.dataset.tag;
-    const sourceType = sourceTerminal.dataset.type;
-    
+    const sourceType = sourceTerminal.dataset.type; // больше не используется для ограничений
     
     document.querySelectorAll('.terminal-v2, .supply-terminal').forEach(term => {
         if (term === sourceTerminal) return;
@@ -5895,33 +5773,20 @@ highlightValidTargets(sourceTerminal) {
         let isValid = false;
         
         if (this.currentMode === 'wire') {
-            // ТОЛЬКО ОТ ВЫХОДА К ВХОДУ
-            if (sourceType === 'out' || sourceType === 'in-src') {
-                // От выхода или главного ввода - только к входу
-                isValid = (termType === 'in');
-            }
-            else if (sourceType === 'bus') {
-                // От шины - только к входу
-                isValid = (termType === 'in');
-            }
-            // sourceType === 'in' - ничего не разрешаем, вход не может быть источником
-            
-            // Если тип подходит, проверяем совместимость тегов
-            if (isValid) {
-                isValid = this.tagManager.areCompatible(sourceTag, termTag, 'wire');
-            }
+            // Проверяем только совместимость тегов (без ограничений по in/out)
+            isValid = this.tagManager.areCompatible(sourceTag, termTag, 'wire');
         } else {
-            // Для гребенки - только одинаковые типы и теги
+            // Для гребенки - одинаковые типы и теги
             isValid = (termType === sourceType) && (termTag === sourceTag);
         }
         
-        // Проверяем, есть ли уже соединение у этой клеммы
-        if (isValid) {
+        // Проверяем, есть ли уже соединение у этой клеммы (только для wire, comb может быть множественным?)
+        if (isValid && this.currentMode === 'wire') {
             const hasConnection = this.wires.some(w => 
                 w.from === term.id || w.to === term.id
             );
             if (hasConnection) {
-                isValid = false; // Клемма уже занята
+                isValid = false; // Клемма уже занята проводом
             }
         }
         
@@ -6020,18 +5885,18 @@ completeWiring(targetTerminal) {
     
     // Создаем провод
     const wire = {
-        id: `wire_v2_${this.nextId++}`,
-        from: fromId,
-        to: toId,
-        color: this.currentColor,
-        thickness: this.currentThickness,
-        mode: this.currentMode,
-        layerId: activeLayerId || 'default',
-        breakpoints: this.calculateBreakpoints(
-            this.wiringStartTerminal, 
-            targetTerminal
-        )
-    };
+    id: `wire_v2_${this.nextId++}`,
+    from: fromId,
+    to: toId,
+    color: this.currentColor,
+    thickness: this.currentThickness,
+    mode: this.currentMode,
+    layerId: activeLayerId || 'default',
+    vGuideSide: 'nearest',
+    breakpoints: null  // временно
+};
+// Теперь wire полностью инициализирован, можно передавать его в calculateBreakpoints
+wire.breakpoints = this.calculateBreakpoints(this.wiringStartTerminal, targetTerminal, wire);
     
     this.wires.push(wire);
     
@@ -6092,44 +5957,125 @@ completeWiringFromClick(targetTerminal, e) {
 }
 
 // Рассчитать точки изгиба провода
-// Рассчитать точки изгиба провода
-calculateBreakpoints(fromEl, toEl) {
+calculateBreakpoints(fromEl, toEl, wire = null) {
     const wr = workspace.getBoundingClientRect();
     const r1 = fromEl.getBoundingClientRect();
     const r2 = toEl.getBoundingClientRect();
-    
     const x1 = r1.left + r1.width/2 - wr.left;
     const y1 = r1.top + r1.height/2 - wr.top + workspace.scrollTop;
     const x2 = r2.left + r2.width/2 - wr.left;
     const y2 = r2.top + r2.height/2 - wr.top + workspace.scrollTop;
-    
+
     const fromType = fromEl.dataset.type;
-    const isFromSupply = fromEl.classList.contains('supply-terminal');
-    
-    // Для главного ввода
-    if (isFromSupply || fromType === 'in-src') {
+    const isFromSupply = fromEl.classList.contains('supply-terminal') || fromType === 'in-src';
+    const guides = window.dinRailManagerV2?.guideLineManager;
+
+    // Если направляющие недоступны, используем legacy-метод
+    if (!guides) {
+        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply);
+    }
+
+    const fromModule = fromEl.closest('.module-v2');
+    const toModule = toEl.closest('.module-v2');
+    const fromRail = fromModule?.closest('.din-rail-v2');
+    const toRail = toModule?.closest('.din-rail-v2');
+
+    // Для главного ввода оставляем простую трассу (можно будет доработать позже)
+    if (isFromSupply) {
         return {
             type: 'supply',
             points: [
-                { x: x1, y: y1 },                          // t0: клемма ввода (жестко)
-                { x: x2, y: y1 },                          // t1: угол (двигается при перемещении модуля)
-                { x: x2, y: y2 }                           // t2: клемма назначения (жестко)
+                { x: x1, y: y1 },
+                { x: x2, y: y1 },
+                { x: x2, y: y2 }
             ]
         };
-    } 
-    // Для модуль-модуль
-    else {
-        const OFFSET = 50;
+    }
+
+    let points = [{ x: x1, y: y1 }];
+
+    // Случай: оба модуля на одной рейке
+    if (fromRail && toRail && fromRail === toRail) {
+        const guide = guides.getClosestHorizontalGuide(Math.min(y1, y2) - 20, x1, x2);
+        if (guide) {
+            points.push({ x: x1, y: guide.y });
+            points.push({ x: x2, y: guide.y });
+        } else {
+            // Fallback
+            points.push({ x: x1, y: y1 + 50 });
+            points.push({ x: x2, y: y1 + 50 });
+            if (!points || points.length < 2) {
+    console.error('calculateBreakpoints вернул некорректные точки, использую fallback');
+    return this._legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply);
+}
+return { type: isFromSupply ? 'supply' : 'module', points };
+        }
+    } else {
+        // Разные рейки или нет реек
+        const startGuideH = guides.getClosestHorizontalGuide(y1, x1 - 50, x1 + 50);
+        const endGuideH = guides.getClosestHorizontalGuide(y2, x2 - 50, x2 + 50);
         
+        if (!startGuideH || !endGuideH) {
+            return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
+        }
+
+        const verticalGuides = guides.getVerticalGuidesInRange(
+            Math.min(startGuideH.y, endGuideH.y),
+            Math.max(startGuideH.y, endGuideH.y)
+        );
+
+        if (verticalGuides.length === 0) {
+            return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
+        }
+
+        // Выбор вертикальной направляющей на основе предпочтения
+        let chosenVGuide;
+        const preferred = wire?.vGuideSide || 'nearest';
+        
+        if (preferred === 'left') {
+            chosenVGuide = verticalGuides[0];
+        } else if (preferred === 'right') {
+            chosenVGuide = verticalGuides[verticalGuides.length - 1];
+        } else {
+            // 'nearest' – ближайшая к среднему X
+            const avgX = (x1 + x2) / 2;
+            chosenVGuide = verticalGuides.reduce((a, b) =>
+                Math.abs(a.x - avgX) < Math.abs(b.x - avgX) ? a : b
+            );
+        }
+
+        points.push({ x: x1, y: startGuideH.y });
+        points.push({ x: chosenVGuide.x, y: startGuideH.y });
+        points.push({ x: chosenVGuide.x, y: endGuideH.y });
+        points.push({ x: x2, y: endGuideH.y });
+    }
+
+    points.push({ x: x2, y: y2 });
+    return { type: 'module', points: points };
+}
+
+// Вспомогательный legacy-метод (старая логика)
+_legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply) {
+    if (isFromSupply) {
+        return {
+            type: 'supply',
+            points: [
+                { x: x1, y: y1 },
+                { x: x2, y: y1 },
+                { x: x2, y: y2 }
+            ]
+        };
+    } else {
+        const OFFSET = 50;
         return {
             type: 'module',
             points: [
-                { x: x1, y: y1 },                          // t0: выходная клемма (жестко)
-                { x: x1, y: y1 + OFFSET },                 // t1: вертикаль вниз (только Y)
-                { x: x2 - OFFSET, y: y1 + OFFSET },        // t2: первый угол (X и Y)
-                { x: x2 - OFFSET, y: y2 - OFFSET },        // t3: второй угол (X и Y)
-                { x: x2, y: y2 - OFFSET },                 // t4: горизонталь (только X)
-                { x: x2, y: y2 }                            // t5: входная клемма (жестко)
+                { x: x1, y: y1 },
+                { x: x1, y: y1 + OFFSET },
+                { x: x2 - OFFSET, y: y1 + OFFSET },
+                { x: x2 - OFFSET, y: y2 - OFFSET },
+                { x: x2, y: y2 - OFFSET },
+                { x: x2, y: y2 }
             ]
         };
     }
@@ -6147,7 +6093,7 @@ updateWiresForModule(moduleId) {
             const fromEl = document.getElementById(wire.from);
             const toEl = document.getElementById(wire.to);
             if (fromEl && toEl) {
-                wire.breakpoints = this.calculateBreakpoints(fromEl, toEl);
+                wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
             }
         }
     });
@@ -6195,6 +6141,20 @@ updateWiresForModule(moduleId) {
         const toEl = document.getElementById(wire.to);
         
         if (!fromEl || !toEl) return;
+
+        if (!wire.breakpoints || !Array.isArray(wire.breakpoints.points) || wire.breakpoints.points.length < 2) {
+    console.warn(`Восстановление breakpoints для провода ${wire.id}`);
+    wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
+}
+const points = wire.breakpoints.points;
+// Дополнительная проверка, что все точки – объекты с x и y
+for (let i = 0; i < points.length; i++) {
+    if (!points[i] || typeof points[i].x !== 'number' || typeof points[i].y !== 'number') {
+        console.error(`Повреждённые точки у провода ${wire.id}, пересчитываем`);
+        wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
+        break;
+    }
+}
         
         const r1 = fromEl.getBoundingClientRect();
         const r2 = toEl.getBoundingClientRect();
@@ -6205,53 +6165,28 @@ updateWiresForModule(moduleId) {
         const y2 = r2.top + r2.height/2 - wr.top + workspace.scrollTop;
         
         // Обновляем breakpoints при перемещении модулей
-        if (wire.breakpoints) {
-            const OFFSET = 50;
-            
-            if (wire.breakpoints.type === 'supply') {
-                // t0 и t2 жестко привязаны к клеммам
-                wire.breakpoints.points[0].x = x1;
-                wire.breakpoints.points[0].y = y1;
-                wire.breakpoints.points[2].x = x2;
-                wire.breakpoints.points[2].y = y2;
-                // t1 сохраняет свои относительные координаты
-            } else {
-                // t0 и t5 жестко привязаны к клеммам
-                wire.breakpoints.points[0].x = x1;
-                wire.breakpoints.points[0].y = y1;
-                wire.breakpoints.points[5].x = x2;
-                wire.breakpoints.points[5].y = y2;
-                
-                // Корректируем связанные точки при перемещении модулей
-                // t1 и t4 сохраняют свои Y относительно t0 и t5
-                if (wire.breakpoints.points[1]) {
-                    wire.breakpoints.points[1].x = x1;
-                }
-                if (wire.breakpoints.points[4]) {
-                    wire.breakpoints.points[4].x = x2;
-                }
-            }
-        }
+        if (wire.breakpoints && wire.breakpoints.points.length >= 2) {
+    const points = wire.breakpoints.points;
+    // Крайние точки всегда привязаны к клеммам
+    points[0].x = x1;
+    points[0].y = y1;
+    points[points.length - 1].x = x2;
+    points[points.length - 1].y = y2;
+
+    // Для типа 'module' подправляем вертикальные участки, если есть соответствующие точки
+    if (wire.breakpoints.type === 'module') {
+        // Первая точка после выхода (вертикаль вниз) сохраняет X = x1
+        if (points[1]) points[1].x = x1;
+        // Предпоследняя точка (горизонталь перед входом) сохраняет X = x2
+        if (points[points.length - 2]) points[points.length - 2].x = x2;
+    }
+}
         
         if (wire.mode === 'comb') {
             const d = `M ${x1} ${y1} L ${x2} ${y2}`;
             this.drawWire(svgCombs, wire, d, 7, '#e67e22');
         } else {
-            let d = '';
-            const breakpoints = wire.breakpoints;
-            
-            if (breakpoints.type === 'supply') {
-                d = `M ${breakpoints.points[0].x} ${breakpoints.points[0].y} 
-                     L ${breakpoints.points[1].x} ${breakpoints.points[1].y} 
-                     L ${breakpoints.points[2].x} ${breakpoints.points[2].y}`;
-            } else {
-                d = `M ${breakpoints.points[0].x} ${breakpoints.points[0].y} 
-                     L ${breakpoints.points[1].x} ${breakpoints.points[1].y} 
-                     L ${breakpoints.points[2].x} ${breakpoints.points[2].y} 
-                     L ${breakpoints.points[3].x} ${breakpoints.points[3].y} 
-                     L ${breakpoints.points[4].x} ${breakpoints.points[4].y} 
-                     L ${breakpoints.points[5].x} ${breakpoints.points[5].y}`;
-            }
+            const d = this.getRoundedPath(wire.breakpoints.points, 80);
             
             const color = this.getWireColor(wire.color);
             const thickness = this.getWireThickness(wire.thickness);
@@ -6292,6 +6227,8 @@ updateWiresForModule(moduleId) {
     path.setAttribute('stroke', color);
     path.setAttribute('stroke-width', thickness);
     path.setAttribute('fill', 'none');
+    path.setAttribute('stroke-linejoin', 'round');   // <-- скругление стыков
+    path.setAttribute('stroke-linecap', 'round');    // <-- скругление концов (для открытых линий)
     path.classList.add('wire');
     path.dataset.wireId = wire.id;
     
@@ -6511,55 +6448,58 @@ startDragPivotOld(e, wireId, pointIndex) {
 // Перетаскивание пивота (адаптировано из старой версии)
 dragPivotOld(e) {
     if (!this.activePivot) return;
-    
+
     const wr = workspace.getBoundingClientRect();
     const mx = e.clientX - wr.left;
     const my = e.clientY - wr.top + workspace.scrollTop;
-    
+
     const wire = this.wires.find(w => w.id === this.activePivot.wireId);
     if (!wire || !wire.breakpoints) return;
-    
-    const pointIndex = parseInt(this.activePivot.pointIndex);
+
+    const pointIndex = this.activePivot.pointIndex;
     const points = wire.breakpoints.points;
-    
-    if (wire.breakpoints.type === 'supply') {
-        if (pointIndex === 1) {
-            points[1].x = mx;
-            points[1].y = my;
-            points[2].x = mx; // Синхронизируем конечную точку по X
+    const type = wire.breakpoints.type;
+
+    // Обновляем координаты перетаскиваемой точки
+    points[pointIndex].x = mx;
+    points[pointIndex].y = my;
+
+    // Синхронизация связанных точек в зависимости от типа трассы и положения
+    if (type === 'supply') {
+        // Для supply только точка t1 (индекс 1) управляет углом, t2 следует по X
+        if (pointIndex === 1 && points[2]) {
+            points[2].x = mx;
         }
     } else {
-        // Обрабатываем разные типы точек
-        if (pointIndex === 1) {
-            points[1].y = my;
-            points[2].y = my;
-        } else if (pointIndex === 2) {
-            points[2].x = mx;
-            points[2].y = my;
-            points[1].y = my;
-            points[3].x = mx;
-        } else if (pointIndex === 3) {
-            points[3].x = mx;
-            points[3].y = my;
-            points[2].x = mx;
-            points[4].y = my;
-        } else if (pointIndex === 4) {
-            points[4].y = my;
-            points[3].y = my;
+        // Для module: определяем, двигаем ли мы вертикальный или угловой сегмент
+        // Простая эвристика: если индекс нечетный и не последний – вертикальный участок
+        const isVertical = (pointIndex % 2 === 1) && pointIndex < points.length - 1;
+        if (isVertical) {
+            // Вертикальная точка: двигается только по Y, тянет соседние углы по Y
+            points[pointIndex].x = points[pointIndex - 1].x; // фиксируем X по предыдущей точке
+            if (points[pointIndex + 1]) {
+                points[pointIndex + 1].y = my; // следующий угол следует по Y
+            }
+        } else {
+            // Угловая точка: двигается свободно, тянет прилегающие вертикальные точки по своей оси
+            if (points[pointIndex - 1]) {
+                points[pointIndex - 1].y = my; // левая вертикаль следует по Y
+            }
+            if (points[pointIndex + 1]) {
+                points[pointIndex + 1].x = mx; // правая вертикаль следует по X
+            }
         }
     }
-    
-    // Обновляем позиции пивотов
-    const circles = document.querySelectorAll(`circle[data-wire-id="${wire.id}"]`);
-    circles.forEach(circle => {
+
+    // Обновляем позиции пивотов на экране
+    document.querySelectorAll(`circle[data-wire-id="${wire.id}"]`).forEach(circle => {
         const idx = parseInt(circle.dataset.pointIndex);
-        if (idx !== undefined && points[idx]) {
+        if (points[idx]) {
             circle.setAttribute('cx', points[idx].x);
             circle.setAttribute('cy', points[idx].y);
         }
     });
-    
-    // Обновляем путь провода
+
     this.updateWirePathImmediate(wire);
 }
 
@@ -6583,20 +6523,9 @@ stopDragPivotOld(e) {
 }
 // Немедленное обновление пути провода
 updateWirePathImmediate(wire) {
-    // Находим путь провода
     const path = document.querySelector(`path.wire[data-wire-id="${wire.id}"]`);
-    if (!path) {
-        return;
-    }
-    
-    const points = wire.breakpoints.points;
-    
-    // Формируем строку пути
-    let d = `M ${points[0].x} ${points[0].y}`;
-    for (let i = 1; i < points.length; i++) {
-        d += ` L ${points[i].x} ${points[i].y}`;
-    }
-    
+    if (!path) return;
+    const d = this.getRoundedPath(wire.breakpoints.points, 80);
     path.setAttribute('d', d);
 }
 
@@ -6710,7 +6639,279 @@ updateLayers() {
 
 }
 
-// ===================== НОВЫЙ UI ДЛЯ ВЫБОРА МОДУЛЯ =====================
+// ===================== МЕНЕДЖЕР НАПРАВЛЯЮЩИХ ДЛЯ ПРОВОДОВ =====================
+class GuideLineManager {
+    constructor(workspace, dinRailManager) {
+        this.workspace = workspace;
+        this.dinRailManager = dinRailManager;
+        this.horizontalGuides = new Map(); // id -> { y, minX, maxX, railId }
+        this.verticalGuides = new Map();   // id -> { x, minY, maxY, groupId }
+        this.guideOffset = 80;            // отступ от рейки (px)
+        this.showGuides = true;            // показывать направляющие (режим отладки)
+        this.guideLayer = this.createGuideLayer();
+    }
+
+    // Создаёт SVG-слой для отрисовки направляющих
+    createGuideLayer() {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.id = 'guide-layer';
+        svg.style.position = 'absolute';
+        svg.style.top = '0';
+        svg.style.left = '0';
+        svg.style.width = '100%';
+        svg.style.height = '100%';
+        svg.style.pointerEvents = 'none';
+        svg.style.zIndex = '45'; // ниже проводов (50), но выше реек (10)
+        this.workspace.appendChild(svg);
+        return svg;
+    }
+
+    // Установить отступ и обновить направляющие
+    setOffset(offset) {
+        this.guideOffset = offset;
+        this.updateFromRails();
+    }
+
+    // Показать/скрыть направляющие
+    setVisibility(visible) {
+        this.showGuides = visible;
+        this.guideLayer.style.display = visible ? 'block' : 'none';
+    }
+
+    // Перестроить направляющие на основе текущего положения реек
+    updateFromRails() {
+    this.horizontalGuides.clear();
+    this.verticalGuides.clear();
+    this.guideLayer.innerHTML = '';
+
+    const rails = Array.from(document.querySelectorAll('.din-rail-v2'));
+    if (rails.length === 0) return;
+
+    const workspaceRect = this.workspace.getBoundingClientRect();
+    const scrollTop = this.workspace.scrollTop;
+
+    // Собираем границы всех реек
+    let globalMinY = Infinity, globalMaxY = -Infinity;
+    let globalMinX = Infinity, globalMaxX = -Infinity;
+
+    const railBounds = rails.map(rail => {
+        const rect = rail.getBoundingClientRect();
+        const top = rect.top - workspaceRect.top + scrollTop;
+        const bottom = rect.bottom - workspaceRect.top + scrollTop;
+        const left = rect.left - workspaceRect.left;
+        const right = rect.right - workspaceRect.left;
+        
+        globalMinY = Math.min(globalMinY, top);
+        globalMaxY = Math.max(globalMaxY, bottom);
+        globalMinX = Math.min(globalMinX, left);
+        globalMaxX = Math.max(globalMaxX, right);
+        
+        return { rail, top, bottom, left, right };
+    });
+
+        // --- 1. Горизонтальные направляющие (над и под каждой рейкой) ---
+         railBounds.forEach(({ rail, top, bottom, left, right }) => {
+        // Верхняя направляющая
+        const topY = top - this.guideOffset;
+        if (topY >= 0) {
+            const id = `h-top-${rail.id}`;
+            this.horizontalGuides.set(id, {
+                y: topY,
+                minX: left,
+                maxX: right,
+                railId: rail.id
+            });
+        }
+
+            // Нижняя направляющая
+            const bottomY = bottom + this.guideOffset;
+        const id = `h-bottom-${rail.id}`;
+        this.horizontalGuides.set(id, {
+            y: bottomY,
+            minX: left,
+            maxX: right,
+            railId: rail.id
+        });
+    });
+
+        // --- 2. Вертикальные направляющие (слева и справа от групп реек с одинаковым Y) ---
+        // Группируем рейки по вертикальному положению (с допуском 5px)
+        const railsByVerticalPos = new Map();
+        rails.forEach(rail => {
+            const rect = rail.getBoundingClientRect();
+            const railTop = rect.top - workspaceRect.top + scrollTop;
+            const railBottom = rect.bottom - workspaceRect.top + scrollTop;
+            const railLeft = rect.left - workspaceRect.left;
+            const railRight = rect.right - workspaceRect.left;
+            
+            const topKey = Math.round(railTop / 5) * 5;
+            if (!railsByVerticalPos.has(topKey)) {
+                railsByVerticalPos.set(topKey, []);
+            }
+            railsByVerticalPos.get(topKey).push({ rail, railTop, railBottom, railLeft, railRight });
+        });
+        // 2.1. Левая общая направляющая (отступ от самой левой рейки)
+    const leftX = globalMinX - this.guideOffset;
+    if (leftX >= 0) {
+        this.verticalGuides.set('v-global-left', {
+            x: leftX,
+            minY: globalMinY,
+            maxY: globalMaxY,
+            groupId: 'global-left'
+        });
+    }
+
+    // 2.2. Правая общая направляющая (отступ от самой правой рейки)
+    const rightX = globalMaxX + this.guideOffset;
+    this.verticalGuides.set('v-global-right', {
+        x: rightX,
+        minY: globalMinY,
+        maxY: globalMaxY,
+        groupId: 'global-right'
+    });
+
+    // 2.3. Внутренние направляющие между колонками (если рейки расположены в несколько столбцов)
+    // Группируем рейки по X-координате левого края (с допуском)
+    const columnGroups = new Map();
+    railBounds.forEach(b => {
+        const leftKey = Math.round(b.left / 10) * 10; // допуск 10px
+        if (!columnGroups.has(leftKey)) {
+            columnGroups.set(leftKey, []);
+        }
+        columnGroups.get(leftKey).push(b);
+    });
+
+    const columns = Array.from(columnGroups.values())
+        .map(group => ({
+            left: Math.min(...group.map(b => b.left)),
+            right: Math.max(...group.map(b => b.right)),
+            rails: group
+        }))
+        .sort((a, b) => a.left - b.left);
+
+    // Между соседними колонками создаём вертикальную направляющую посередине
+    for (let i = 0; i < columns.length - 1; i++) {
+        const colA = columns[i];
+        const colB = columns[i + 1];
+        const gapCenter = (colA.right + colB.left) / 2;
+        // Убедимся, что промежуток достаточно широк (хотя бы 20px)
+        if (colB.left - colA.right > 20) {
+            this.verticalGuides.set(`v-internal-${i}`, {
+                x: gapCenter,
+                minY: globalMinY,
+                maxY: globalMaxY,
+                groupId: `internal-${i}`
+            });
+        }
+    }
+
+        // Для каждой группы создаём общие левую и правую вертикальные направляющие
+        railsByVerticalPos.forEach((groupRails) => {
+            let minY = Infinity, maxY = -Infinity;
+            let leftMost = Infinity, rightMost = -Infinity;
+            
+            groupRails.forEach(r => {
+                minY = Math.min(minY, r.railTop);
+                maxY = Math.max(maxY, r.railBottom);
+                leftMost = Math.min(leftMost, r.railLeft);
+                rightMost = Math.max(rightMost, r.railRight);
+            });
+
+            // Левая направляющая
+            const leftX = leftMost - this.guideOffset;
+            if (leftX >= 0) {
+                const id = `v-left-group-${minY}`;
+                this.verticalGuides.set(id, { x: leftX, minY, maxY, groupId: id });
+            }
+
+            // Правая направляющая
+            const rightX = rightMost + this.guideOffset;
+            const id = `v-right-group-${minY}`;
+            this.verticalGuides.set(id, { x: rightX, minY, maxY, groupId: id });
+        });
+
+        // Отрисовка, если включён режим отладки
+        if (this.showGuides) {
+            this.drawGuides();
+        }
+    }
+
+    // Нарисовать направляющие на слое
+    drawGuides() {
+        this.guideLayer.innerHTML = '';
+        const ns = 'http://www.w3.org/2000/svg';
+
+        // Горизонтальные (оранжевые)
+        this.horizontalGuides.forEach(guide => {
+            const line = document.createElementNS(ns, 'line');
+            line.setAttribute('x1', guide.minX);
+            line.setAttribute('y1', guide.y);
+            line.setAttribute('x2', guide.maxX);
+            line.setAttribute('y2', guide.y);
+            line.setAttribute('stroke', '#e67e22');
+            line.setAttribute('stroke-width', '2');
+            line.setAttribute('stroke-dasharray', '8,4');
+            this.guideLayer.appendChild(line);
+        });
+
+        // Вертикальные (синие)
+        this.verticalGuides.forEach(guide => {
+            const line = document.createElementNS(ns, 'line');
+            line.setAttribute('x1', guide.x);
+            line.setAttribute('y1', guide.minY);
+            line.setAttribute('x2', guide.x);
+            line.setAttribute('y2', guide.maxY);
+            line.setAttribute('stroke', '#3498db');
+            line.setAttribute('stroke-width', '2');
+            line.setAttribute('stroke-dasharray', '8,4');
+            this.guideLayer.appendChild(line);
+        });
+    }
+
+    // Получить ближайшую горизонтальную направляющую к координате Y
+    getClosestHorizontalGuide(y, minX = -Infinity, maxX = Infinity) {
+        let bestGuide = null;
+        let bestDist = Infinity;
+        this.horizontalGuides.forEach(guide => {
+            // Проверяем, что X находится в пределах направляющей (с запасом 10px)
+            if (minX > guide.maxX + 10 || maxX < guide.minX - 10) return;
+            const dist = Math.abs(guide.y - y);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestGuide = guide;
+            }
+        });
+        return bestGuide;
+    }
+
+    // Получить все вертикальные направляющие, пересекающие интервал [minY, maxY]
+    getVerticalGuidesInRange(minY, maxY) {
+        const guides = [];
+        this.verticalGuides.forEach(guide => {
+            if (guide.minY <= maxY && guide.maxY >= minY) {
+                guides.push(guide);
+            }
+        });
+        guides.sort((a, b) => a.x - b.x);
+        return guides;
+    }
+
+    // Получить ближайшую вертикальную направляющую к координате X
+    getClosestVerticalGuide(x, minY = -Infinity, maxY = Infinity) {
+        let bestGuide = null;
+        let bestDist = Infinity;
+        this.verticalGuides.forEach(guide => {
+            if (minY > guide.maxY + 10 || maxY < guide.minY - 10) return;
+            const dist = Math.abs(guide.x - x);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestGuide = guide;
+            }
+        });
+        return bestGuide;
+    }
+}
+// ===================== НОВЫЙ UI селектора ДЛЯ ВЫБОРА МОДУЛЯ =====================
 class ModuleSelectorUI {
     constructor(containerId, moduleManager) {
         this.container = document.getElementById(containerId);
@@ -6840,10 +7041,18 @@ onGlobalBrandChange(selectedBrand) {
     document.getElementById('add-module-btn-v2').disabled = true;
 }
 
-    getMergedParametersForType(type) {
+    getMergedParametersForType(type, brandFilter = 'all') {
     const merged = {};
     
-    for (const brandData of Object.values(MODULE_DATABASE_V2)) {
+    // Определяем, какие бренды обрабатывать
+    const brandsToProcess = brandFilter === 'all' 
+        ? Object.keys(MODULE_DATABASE_V2)
+        : [brandFilter];
+    
+    for (const brand of brandsToProcess) {
+        const brandData = MODULE_DATABASE_V2[brand];
+        if (!brandData) continue;
+        
         for (const seriesData of Object.values(brandData)) {
             const config = seriesData[type];
             if (!config?.parameters) continue;
@@ -6865,7 +7074,6 @@ onGlobalBrandChange(selectedBrand) {
     // Преобразуем Set в отсортированный массив
     for (const key in merged) {
         merged[key].options = Array.from(merged[key].options).sort((a, b) => {
-            // Числовая сортировка, если значения – числа
             const aNum = parseFloat(a);
             const bNum = parseFloat(b);
             if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
@@ -6956,6 +7164,21 @@ onParameterChange(key, value) {
         document.getElementById('brand-select-v2')?.addEventListener('change', (e) => this.onBrandChange(e.target.value));
         document.getElementById('series-select-v2')?.addEventListener('change', (e) => this.onSeriesChange(e.target.value));
         document.getElementById('add-module-btn-v2')?.addEventListener('click', () => this.addModule());
+        const showGuidesCheck = document.getElementById('show-guides-checkbox');
+const offsetInput = document.getElementById('guide-offset-input');
+if (showGuidesCheck) {
+    showGuidesCheck.addEventListener('change', () => {
+        this.dinRailManager.guideLineManager.setVisibility(showGuidesCheck.checked);
+    });
+}
+if (offsetInput) {
+    offsetInput.addEventListener('change', () => {
+        const val = parseInt(offsetInput.value);
+        if (!isNaN(val) && val >= 20) {
+            this.dinRailManager.guideLineManager.setOffset(val);
+        }
+    });
+}
     }
 
     loadTypes() {
@@ -7022,16 +7245,30 @@ onParameterChange(key, value) {
     this.currentSeries = '';
     this.currentParams = {};
     
-    const mergedParams = this.getMergedParametersForType(type);
+    // Передаём глобальный фильтр бренда
+    const mergedParams = this.getMergedParametersForType(type, this.globalBrandFilter);
     this.renderParameterFields(mergedParams);
     
-    // Сбрасываем бренд и серию
+    // Сбрасываем бренд и серию (если фильтр не 'all', то бренд уже заблокирован)
     const brandSelect = document.getElementById('brand-select-v2');
     const seriesSelect = document.getElementById('series-select-v2');
-    brandSelect.innerHTML = '<option value="">Сначала выберите параметры</option>';
-    brandSelect.disabled = true;
-    seriesSelect.innerHTML = '<option value="">Сначала выберите бренд</option>';
-    seriesSelect.disabled = true;
+    
+    if (this.globalBrandFilter !== 'all') {
+        brandSelect.innerHTML = `<option value="${this.globalBrandFilter}">${this.globalBrandFilter}</option>`;
+        brandSelect.value = this.globalBrandFilter;
+        brandSelect.disabled = true;
+        this.currentBrand = this.globalBrandFilter;
+        // Сразу пытаемся загрузить серии, если параметров нет
+        if (Object.keys(mergedParams).length === 0) {
+            this.updateAvailableBrands();
+        }
+    } else {
+        brandSelect.innerHTML = '<option value="">Сначала выберите параметры</option>';
+        brandSelect.disabled = true;
+        seriesSelect.innerHTML = '<option value="">Сначала выберите бренд</option>';
+        seriesSelect.disabled = true;
+    }
+    
     document.getElementById('add-module-btn-v2').disabled = true;
 }
 
@@ -7713,21 +7950,80 @@ updateAmpsOptions() {
     }
 }
 
-// ===================== ТЕСТОВАЯ ФУНКЦИЯ =====================
-function testInternalConnections() {
-    document.querySelectorAll('.module-v2').forEach(module => {
-        const moduleId = module.dataset.moduleId;
-        const config = moduleManagerV2.configs.get(moduleId);
-         const colorSelect = document.getElementById('color-select-v2');
-    if (colorSelect && colorSelect.style.display !== 'none' && colorSelect.value) {
-        params.color = colorSelect.value;
+// ===================== UI СЕЛЕКТОРА DIN-РЕЕК =====================
+class DinRailSelectorUI {
+    constructor(containerId, dinRailManager) {
+        this.container = document.getElementById(containerId);
+        this.dinRailManager = dinRailManager;
+        this.render();
+        this.attachEvents();
     }
-        
-        const terminals = module.querySelectorAll('.terminal-v2');
-        terminals.forEach((term, idx) => {
+
+    render() {
+        this.container.innerHTML = `
+            <div class="din-rail-selector-v2">
+                <h3>DIN-рейки</h3>
+                
+                <div class="selector-row">
+                    <label>Режим:</label>
+                    <select id="din-rail-mode-select" class="v2-select">
+                        <option value="single">Одиночная рейка</option>
+                    </select>
+                </div>
+
+                <div id="din-rail-single-options">
+                    <div class="selector-row">
+                        <label>Модулей в ряду:</label>
+                        <select id="din-rail-modules-count" class="v2-select">
+                            <option value="12">12</option>
+                            <option value="18">18</option>
+                            <option value="24">24</option>
+                        </select>
+                    </div>
+                </div>
+
+                
+
+                <button id="add-din-rail-btn" class="v2-add-btn">Добавить рейку(и)</button>
+                <button id="remove-all-rails-btn" class="sidebar-btn" style="margin-top:8px; background:#e74c3c;">Удалить все рейки</button>
+            </div>
+        `;
+    }
+
+    attachEvents() {
+        const modeSelect = document.getElementById('din-rail-mode-select');
+        const singleOpts = document.getElementById('din-rail-single-options');
+        const presetOpts = document.getElementById('din-rail-preset-options');
+        const addBtn = document.getElementById('add-din-rail-btn');
+        const removeAllBtn = document.getElementById('remove-all-rails-btn');
+
+        modeSelect.addEventListener('change', () => {
+            const isPreset = modeSelect.value === 'preset';
+            singleOpts.style.display = isPreset ? 'none' : 'block';
+            presetOpts.style.display = isPreset ? 'block' : 'none';
         });
-    });
+
+        addBtn.addEventListener('click', () => {
+            const mode = modeSelect.value;
+            if (mode === 'single') {
+                const modulesCount = parseInt(document.getElementById('din-rail-modules-count').value);
+                this.dinRailManager.addSingleRail(modulesCount);
+            } else {
+                const columns = parseInt(document.getElementById('din-rail-columns').value);
+                const rows = parseInt(document.getElementById('din-rail-rows').value);
+                const modulesPerRow = parseInt(document.getElementById('din-rail-preset-modules').value);
+                this.dinRailManager.addPresetRails(columns, rows, modulesPerRow);
+            }
+        });
+
+        removeAllBtn.addEventListener('click', () => {
+            if (confirm('Удалить все рейки? Модули останутся на рабочей области.')) {
+                this.dinRailManager.deleteAllRails();
+            }
+        });
+    }
 }
+
 // ===================== ТЕСТОВАЯ ФУНКЦИЯ =====================
 async function testCreateModuleV2() {
     try {
@@ -7849,10 +8145,10 @@ const onMouseUp = () => {
     document.removeEventListener('mouseup', onMouseUp);
     
     // Проверяем привязку к рейке
-    if (dinRailManagerV2) {
-        const result = dinRailManagerV2.findNearestRail(moduleEl);
+     if (dinRailManagerV2) {
+        const result = dinRailManagerV2.findNearestRail(moduleEl, undefined, undefined, false);
         if (result) {
-            dinRailManagerV2.snapModuleToRail(moduleEl, result.rail, result.slot);
+            dinRailManagerV2.snapModuleToRail(moduleEl, result.rail, result.leftPx);
         }
     }
     
@@ -7875,9 +8171,12 @@ window.addEventListener('DOMContentLoaded', () => {
     
     moduleSelectorV2 = new ModuleSelectorUI('module-selector-container', moduleManagerV2);
     
-    // Создаем менеджер реек ПОСЛЕ всех остальных менеджеров
+    // Создаём менеджер реек
     const dinRailManagerV2 = new DinRailManagerV2(moduleManagerV2);
     window.dinRailManagerV2 = dinRailManagerV2;
+    
+    // Создаём UI селектора реек
+    new DinRailSelectorUI('din-rail-selector-container', dinRailManagerV2);
     
     setTimeout(() => {
         if (tagManagerV2) {
@@ -8590,6 +8889,7 @@ function showWireContextMenuV2(e, wireId) {
     e.stopPropagation();
     
     selectedWireIdV2 = wireId;
+    wiringManagerV2.selectedWireId = wireId;
     
     const menu = document.getElementById('wireContextMenu');
     menu.style.left = e.clientX + 'px';
@@ -9041,15 +9341,18 @@ function getModuleDisplayName(moduleEl) {
 
     // ===================== ИНИЦИАЛИЗАЦИЯ =====================
     window.addEventListener('DOMContentLoaded', () => {
-
-    
     initLayers();
     initFavoritesV2();
     
-    // Новая инициализация v2
     moduleSelectorV2 = new ModuleSelectorUI('module-selector-container', moduleManagerV2);
     
-    // Обновляем теги через новый менеджер
+    // Создаём менеджер реек
+    const dinRailManagerV2 = new DinRailManagerV2(moduleManagerV2);
+    window.dinRailManagerV2 = dinRailManagerV2;
+    
+    // Создаём UI селектора реек
+    new DinRailSelectorUI('din-rail-selector-container', dinRailManagerV2);
+    
     setTimeout(() => {
         if (tagManagerV2) {
             tagManagerV2.updateAllTags();
