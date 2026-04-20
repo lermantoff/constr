@@ -5900,7 +5900,8 @@ completeWiring(targetTerminal) {
     mode: this.currentMode,
     layerId: activeLayerId || 'default',
     vGuideSide: 'nearest',
-    breakpoints: null  // временно
+    offsetIndex: this.wires.length, // <-- НОВОЕ ПОЛЕ
+    breakpoints: null
 };
 // Теперь wire полностью инициализирован, можно передавать его в calculateBreakpoints
 wire.breakpoints = this.calculateBreakpoints(this.wiringStartTerminal, targetTerminal, wire);
@@ -5981,7 +5982,6 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
         return this._legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply);
     }
 
-    // Для главного ввода оставляем простую трассу
     if (isFromSupply) {
         return {
             type: 'supply',
@@ -5998,28 +5998,30 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
     const fromRail = fromModule?.closest('.din-rail-v2');
     const toRail = toModule?.closest('.din-rail-v2');
 
-    // Проверка на "перемычку": обе клеммы на рейках и на одной линии
-    const SAME_LINE_THRESHOLD = 30; // пикселей
+    const SAME_LINE_THRESHOLD = 30;
     const bothOnRails = fromRail && toRail;
     const isSameLine = Math.abs(y1 - y2) < SAME_LINE_THRESHOLD;
 
+    // Базовое смещение (знакопеременное)
+    const offsetIdx = wire?.offsetIndex || 0;
+    const offsetSign = offsetIdx % 2 === 0 ? 1 : 1;
+    const offsetAmount = offsetIdx * 2 * offsetSign; //смещение
+
     if (bothOnRails && isSameLine) {
-        // Перемычка — только горизонтальная направляющая
         const guide = guides.getClosestHorizontalGuide(y1, Math.min(x1, x2), Math.max(x1, x2));
         if (guide) {
+            const guideY = guide.y + offsetAmount; // смещаем горизонталь
             const points = [
                 { x: x1, y: y1 },
-                { x: x1, y: guide.y },
-                { x: x2, y: guide.y },
+                { x: x1, y: guideY },
+                { x: x2, y: guideY },
                 { x: x2, y: y2 }
             ];
             return { type: 'module', points };
         }
-        // Fallback, если направляющая не найдена
         return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
     }
 
-    // Для всех остальных случаев — полный маршрут с вертикальной направляющей
     const startGuideH = guides.getClosestHorizontalGuide(y1, x1 - 50, x1 + 50);
     const endGuideH = guides.getClosestHorizontalGuide(y2, x2 - 50, x2 + 50);
     
@@ -6049,16 +6051,21 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
         );
     }
 
+    // Смещённые координаты направляющих
+    const startY = startGuideH.y + offsetAmount;
+    const endY = endGuideH.y + offsetAmount;
+    const vertX = chosenVGuide.x + offsetAmount;
+
     const points = [
         { x: x1, y: y1 },
-        { x: x1, y: startGuideH.y },
-        { x: chosenVGuide.x, y: startGuideH.y }
+        { x: x1, y: startY },
+        { x: vertX, y: startY }
     ];
 
-    if (Math.abs(startGuideH.y - endGuideH.y) > 5) {
-        points.push({ x: chosenVGuide.x, y: endGuideH.y });
+    if (Math.abs(startY - endY) > 5) {
+        points.push({ x: vertX, y: endY });
     }
-    points.push({ x: x2, y: endGuideH.y });
+    points.push({ x: x2, y: endY });
     points.push({ x: x2, y: y2 });
 
     return { type: 'module', points };
