@@ -1171,7 +1171,7 @@
     
     <div id="sidebar">
         <h2 style="margin: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 5px;">
-    <div style="width: 60px;"></div> <!-- пустой блок для баланса -->
+    <div style="width: 60px;"></div> 
     <img src="logo.jpg" alt="Логотип" style="width: 120px; height: auto;">
     <div id="fps-counter" style="font-size: 14px; color: #ecf0f1; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 4px; font-family: monospace;">FPS: --</div>
 </h2>
@@ -1477,7 +1477,22 @@ stopDragRail() {
     }
     document.removeEventListener('mousemove', this.onMouseMove);
     document.removeEventListener('mouseup', this.onMouseUp);
-    this.guideLineManager.updateFromRails();
+
+    // Немедленное обновление
+    if (this.guideLineManager) {
+        this.guideLineManager.updateFromRails();
+    }
+
+    // Дополнительное отложенное обновление для гарантии синхронизации
+    setTimeout(() => {
+        if (this.guideLineManager) {
+            this.guideLineManager.updateFromRails();
+        }
+        // Перерисовка проводов после обновления направляющих
+        if (wiringManagerV2) {
+            wiringManagerV2.renderWires();
+        }
+    }, 300);
 }
 
     // Проверить, есть ли уже рейки
@@ -5970,7 +5985,7 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
     const isFromSupply = fromEl.classList.contains('supply-terminal') || fromType === 'in-src';
     const guides = window.dinRailManagerV2?.guideLineManager;
 
-    // Если направляющие недоступны, используем legacy-метод
+    // Если направляющие недоступны, используем legacy
     if (!guides) {
         return this._legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply);
     }
@@ -5994,64 +6009,51 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
 
     let points = [{ x: x1, y: y1 }];
 
-    // Случай: оба модуля на одной рейке
-    if (fromRail && toRail && fromRail === toRail) {
-        const guide = guides.getClosestHorizontalGuide(Math.min(y1, y2) - 20, x1, x2);
-        if (guide) {
-            points.push({ x: x1, y: guide.y });
-            points.push({ x: x2, y: guide.y });
-        } else {
-            // Fallback
-            points.push({ x: x1, y: y1 + 50 });
-            points.push({ x: x2, y: y1 + 50 });
-            if (!points || points.length < 2) {
-    console.error('calculateBreakpoints вернул некорректные точки, использую fallback');
-    return this._legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply);
-}
-return { type: isFromSupply ? 'supply' : 'module', points };
-        }
-    } else {
-        // Разные рейки или нет реек
-        const startGuideH = guides.getClosestHorizontalGuide(y1, x1 - 50, x1 + 50);
-        const endGuideH = guides.getClosestHorizontalGuide(y2, x2 - 50, x2 + 50);
-        
-        if (!startGuideH || !endGuideH) {
-            return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
-        }
-
-        const verticalGuides = guides.getVerticalGuidesInRange(
-            Math.min(startGuideH.y, endGuideH.y),
-            Math.max(startGuideH.y, endGuideH.y)
-        );
-
-        if (verticalGuides.length === 0) {
-            return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
-        }
-
-        // Выбор вертикальной направляющей на основе предпочтения
-        let chosenVGuide;
-        const preferred = wire?.vGuideSide || 'nearest';
-        
-        if (preferred === 'left') {
-            chosenVGuide = verticalGuides[0];
-        } else if (preferred === 'right') {
-            chosenVGuide = verticalGuides[verticalGuides.length - 1];
-        } else {
-            // 'nearest' – ближайшая к среднему X
-            const avgX = (x1 + x2) / 2;
-            chosenVGuide = verticalGuides.reduce((a, b) =>
-                Math.abs(a.x - avgX) < Math.abs(b.x - avgX) ? a : b
-            );
-        }
-
-        points.push({ x: x1, y: startGuideH.y });
-        points.push({ x: chosenVGuide.x, y: startGuideH.y });
-        points.push({ x: chosenVGuide.x, y: endGuideH.y });
-        points.push({ x: x2, y: endGuideH.y });
+    // 1. Находим горизонтальные направляющие для старта и финиша
+    //    Определяем, с какой стороны рейки лучше прокладывать (сверху или снизу)
+    const startGuideH = guides.getClosestHorizontalGuide(y1, x1 - 50, x1 + 50);
+    const endGuideH = guides.getClosestHorizontalGuide(y2, x2 - 50, x2 + 50);
+    
+    if (!startGuideH || !endGuideH) {
+        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
     }
 
+    // 2. Получаем все вертикальные направляющие, охватывающие диапазон Y между выбранными горизонталями
+    const minY = Math.min(startGuideH.y, endGuideH.y);
+    const maxY = Math.max(startGuideH.y, endGuideH.y);
+    const verticalGuides = guides.getVerticalGuidesInRange(minY, maxY);
+
+    if (verticalGuides.length === 0) {
+        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
+    }
+
+    // 3. Выбор вертикальной направляющей на основе предпочтения
+    let chosenVGuide;
+    const preferred = wire?.vGuideSide || 'nearest';
+    
+    if (preferred === 'left') {
+        chosenVGuide = verticalGuides[0];
+    } else if (preferred === 'right') {
+        chosenVGuide = verticalGuides[verticalGuides.length - 1];
+    } else {
+        // 'nearest' – ближайшая к среднему X
+        const avgX = (x1 + x2) / 2;
+        chosenVGuide = verticalGuides.reduce((a, b) =>
+            Math.abs(a.x - avgX) < Math.abs(b.x - avgX) ? a : b
+        );
+    }
+
+    // 4. Построение пути (универсальное, работает и для одной рейки)
+    points.push({ x: x1, y: startGuideH.y });
+    points.push({ x: chosenVGuide.x, y: startGuideH.y });
+    // Если startGuideH и endGuideH – разные, добавляем вертикальный участок
+    if (Math.abs(startGuideH.y - endGuideH.y) > 5) {
+        points.push({ x: chosenVGuide.x, y: endGuideH.y });
+    }
+    points.push({ x: x2, y: endGuideH.y });
     points.push({ x: x2, y: y2 });
-    return { type: 'module', points: points };
+
+    return { type: 'module', points };
 }
 
 // Вспомогательный legacy-метод (старая логика)
