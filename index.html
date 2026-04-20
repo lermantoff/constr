@@ -1194,15 +1194,7 @@
                 </div>
             </div>
 
-            <div class="selector-row">
-    <label>
-        <input type="checkbox" id="show-guides-checkbox" checked> Показывать направляющие
-    </label>
-</div>
-<div class="selector-row">
-    <label>Отступ направляющих (px):</label>
-    <input type="number" id="guide-offset-input" value="100" min="20" max="300" step="10" class="v2-select">
-</div>
+        
             <!-- ===== НОВЫЙ СЕЛЕКТОР DIN-РЕЕК V3 ===== -->
 <div id="din-rail-selector-container"></div>
 
@@ -5985,17 +5977,11 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
     const isFromSupply = fromEl.classList.contains('supply-terminal') || fromType === 'in-src';
     const guides = window.dinRailManagerV2?.guideLineManager;
 
-    // Если направляющие недоступны, используем legacy
     if (!guides) {
         return this._legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply);
     }
 
-    const fromModule = fromEl.closest('.module-v2');
-    const toModule = toEl.closest('.module-v2');
-    const fromRail = fromModule?.closest('.din-rail-v2');
-    const toRail = toModule?.closest('.din-rail-v2');
-
-    // Для главного ввода оставляем простую трассу (можно будет доработать позже)
+    // Для главного ввода оставляем простую трассу
     if (isFromSupply) {
         return {
             type: 'supply',
@@ -6007,10 +5993,33 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
         };
     }
 
-    let points = [{ x: x1, y: y1 }];
+    const fromModule = fromEl.closest('.module-v2');
+    const toModule = toEl.closest('.module-v2');
+    const fromRail = fromModule?.closest('.din-rail-v2');
+    const toRail = toModule?.closest('.din-rail-v2');
 
-    // 1. Находим горизонтальные направляющие для старта и финиша
-    //    Определяем, с какой стороны рейки лучше прокладывать (сверху или снизу)
+    // Проверка на "перемычку": обе клеммы на рейках и на одной линии
+    const SAME_LINE_THRESHOLD = 30; // пикселей
+    const bothOnRails = fromRail && toRail;
+    const isSameLine = Math.abs(y1 - y2) < SAME_LINE_THRESHOLD;
+
+    if (bothOnRails && isSameLine) {
+        // Перемычка — только горизонтальная направляющая
+        const guide = guides.getClosestHorizontalGuide(y1, Math.min(x1, x2), Math.max(x1, x2));
+        if (guide) {
+            const points = [
+                { x: x1, y: y1 },
+                { x: x1, y: guide.y },
+                { x: x2, y: guide.y },
+                { x: x2, y: y2 }
+            ];
+            return { type: 'module', points };
+        }
+        // Fallback, если направляющая не найдена
+        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
+    }
+
+    // Для всех остальных случаев — полный маршрут с вертикальной направляющей
     const startGuideH = guides.getClosestHorizontalGuide(y1, x1 - 50, x1 + 50);
     const endGuideH = guides.getClosestHorizontalGuide(y2, x2 - 50, x2 + 50);
     
@@ -6018,7 +6027,6 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
         return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
     }
 
-    // 2. Получаем все вертикальные направляющие, охватывающие диапазон Y между выбранными горизонталями
     const minY = Math.min(startGuideH.y, endGuideH.y);
     const maxY = Math.max(startGuideH.y, endGuideH.y);
     const verticalGuides = guides.getVerticalGuidesInRange(minY, maxY);
@@ -6027,7 +6035,6 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
         return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
     }
 
-    // 3. Выбор вертикальной направляющей на основе предпочтения
     let chosenVGuide;
     const preferred = wire?.vGuideSide || 'nearest';
     
@@ -6036,17 +6043,18 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
     } else if (preferred === 'right') {
         chosenVGuide = verticalGuides[verticalGuides.length - 1];
     } else {
-        // 'nearest' – ближайшая к среднему X
         const avgX = (x1 + x2) / 2;
         chosenVGuide = verticalGuides.reduce((a, b) =>
             Math.abs(a.x - avgX) < Math.abs(b.x - avgX) ? a : b
         );
     }
 
-    // 4. Построение пути (универсальное, работает и для одной рейки)
-    points.push({ x: x1, y: startGuideH.y });
-    points.push({ x: chosenVGuide.x, y: startGuideH.y });
-    // Если startGuideH и endGuideH – разные, добавляем вертикальный участок
+    const points = [
+        { x: x1, y: y1 },
+        { x: x1, y: startGuideH.y },
+        { x: chosenVGuide.x, y: startGuideH.y }
+    ];
+
     if (Math.abs(startGuideH.y - endGuideH.y) > 5) {
         points.push({ x: chosenVGuide.x, y: endGuideH.y });
     }
@@ -7166,21 +7174,7 @@ onParameterChange(key, value) {
         document.getElementById('brand-select-v2')?.addEventListener('change', (e) => this.onBrandChange(e.target.value));
         document.getElementById('series-select-v2')?.addEventListener('change', (e) => this.onSeriesChange(e.target.value));
         document.getElementById('add-module-btn-v2')?.addEventListener('click', () => this.addModule());
-        const showGuidesCheck = document.getElementById('show-guides-checkbox');
-const offsetInput = document.getElementById('guide-offset-input');
-if (showGuidesCheck) {
-    showGuidesCheck.addEventListener('change', () => {
-        this.dinRailManager.guideLineManager.setVisibility(showGuidesCheck.checked);
-    });
-}
-if (offsetInput) {
-    offsetInput.addEventListener('change', () => {
-        const val = parseInt(offsetInput.value);
-        if (!isNaN(val) && val >= 20) {
-            this.dinRailManager.guideLineManager.setOffset(val);
-        }
-    });
-}
+        
     }
 
     loadTypes() {
