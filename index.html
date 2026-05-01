@@ -9631,19 +9631,22 @@ function getTerminalTag(terminalId) {
         // Подготавливаем внешний вид
         workspace.style.backgroundImage = 'none';
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
-         const inputs = workspace.querySelectorAll('input, textarea');
-        inputs.forEach(input => {
-            // Переносим текст из свойства в атрибут HTML
-            input.setAttribute('value', input.value);
-            // Если это многострочный текст, кладем его внутрь тега
-            if (input.tagName.toLowerCase() === 'textarea') {
-                input.innerHTML = input.value;
-            }
-            // Заодно чиним галочки (чекбоксы), если они есть на схеме
-            if (input.type === 'checkbox' || input.type === 'radio') {
-                if (input.checked) input.setAttribute('checked', 'checked');
-                else input.removeAttribute('checked');
-            }
+        
+        // ---- ФИКС МАРКЕРОВ (Превращаем инпуты в DIV на время скриншота) ----
+        const markers = [];
+        workspace.querySelectorAll('input.module-label-input').forEach(input => {
+            const div = document.createElement('div');
+            // Копируем все ваши стили (желтый фон, рамку, позицию)
+            div.style.cssText = input.style.cssText; 
+            div.style.boxSizing = 'border-box'; // Чтобы рамка не ломала размер
+            // Если текст введен - пишем его, если пусто - ничего
+            div.innerText = input.value; 
+            div.className = input.className; // На всякий случай копируем классы
+            
+            // Вставляем div вместо инпута, а инпут временно прячем
+            input.parentNode.insertBefore(div, input);
+            input.style.display = 'none';
+            markers.push({ input, div });
         });
         
         // 4. ДЕЛАЕМ СКРИНШОТ РАСТЯНУТОЙ СХЕМЫ
