@@ -9631,6 +9631,20 @@ function getTerminalTag(terminalId) {
         // Подготавливаем внешний вид
         workspace.style.backgroundImage = 'none';
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
+         const inputs = workspace.querySelectorAll('input, textarea');
+        inputs.forEach(input => {
+            // Переносим текст из свойства в атрибут HTML
+            input.setAttribute('value', input.value);
+            // Если это многострочный текст, кладем его внутрь тега
+            if (input.tagName.toLowerCase() === 'textarea') {
+                input.innerHTML = input.value;
+            }
+            // Заодно чиним галочки (чекбоксы), если они есть на схеме
+            if (input.type === 'checkbox' || input.type === 'radio') {
+                if (input.checked) input.setAttribute('checked', 'checked');
+                else input.removeAttribute('checked');
+            }
+        });
         
         // 4. ДЕЛАЕМ СКРИНШОТ РАСТЯНУТОЙ СХЕМЫ
         const canvasScheme = await html2canvas(workspace, { 
