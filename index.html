@@ -9591,15 +9591,15 @@ function getModuleDisplayName(moduleEl) {
         if(wiringManagerV2.wires.length === 0) {
             schemaTbody.innerHTML = '<tr><td colspan="3">Нет соединений</td></tr>';
         } else {
-            // Примечание: если тут будет ошибка 'wires is not defined', замените wires.forEach на wiringManagerV2.wires.forEach
-            wires.forEach(w => {
+            wiringManagerV2.wires.forEach(w => {
                 const row = document.createElement('tr');
                 const fromName = getComponentName(w.from);
                 const toName = getComponentName(w.to);
                 const fromTag = getTerminalTag(w.from);
                 const toTag = getTerminalTag(w.to);
                 const wireInfo = (w.type === 'comb') ? 'Гребенка' : `Провод ${w.width}мм² (${w.color})`;
-                const layerName = layers.find(l => l.id === w.layerId)?.name || '';
+                // Если layers тоже не найдет, поправьте на нужный массив, например wiringManagerV2.layers
+                const layerName = typeof layers !== 'undefined' ? (layers.find(l => l.id === w.layerId)?.name || '') : '';
                 row.innerHTML = `<td>${fromName} [${fromTag}]</td><td>${wireInfo}${layerName ? ` [${layerName}]` : ''}</td><td>${toName} [${toTag}]</td>`;
                 schemaTbody.appendChild(row);
             });
