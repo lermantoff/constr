@@ -9586,33 +9586,63 @@ function getTerminalTag(terminalId) {
     return terminal.dataset.tag || terminal.dataset.label || terminal.title || terminal.innerText || '*';
 }
     async function savePDF() {
-    // 1. СОХРАНЯЕМ ТЕКУЩИЙ МАСШТАБ И СДВИГ
+    // 1. СОХРАНЯЕМ ТЕКУЩЕЕ СОСТОЯНИЕ (чтобы вернуть все обратно)
     const savedTransform = workspace.style.transform;
-    const savedScale = window.currentScale || 1; // Если переменные называются иначе, поправьте
-    const savedPanX = window.panX || 0;
-    const savedPanY = window.panY || 0;
+    const savedScale = typeof currentScale !== 'undefined' ? currentScale : 1;
+    const savedPanX = typeof panX !== 'undefined' ? panX : 0;
+    const savedPanY = typeof panY !== 'undefined' ? panY : 0;
+
+    // Сохраняем исходные габариты и стили контейнера
+    const savedWidth = workspace.style.width;
+    const savedHeight = workspace.style.height;
+    const savedOverflow = workspace.style.overflow;
 
     try {
-        // 2. СБРАСЫВАЕМ ХОЛСТ (100% масштаб, нулевое смещение)
-        // Это необходимо для html2canvas, иначе схема обрежется
+        // 2. СБРАСЫВАЕМ МАСШТАБ И СДВИГ
         if (typeof currentScale !== 'undefined') currentScale = 1;
         if (typeof panX !== 'undefined') panX = 0;
         if (typeof panY !== 'undefined') panY = 0;
         workspace.style.transform = `translate(0px, 0px) scale(1)`;
 
-        // Ваши подготовки (убираем фон и пивоты)
+        // 3. ВЫЧИСЛЯЕМ ГАБАРИТНЫЙ КОНТЕЙНЕР (чтобы ничего не обрезалось)
+        // Ищем самые крайние правые и нижние точки всех элементов на холсте
+        let maxRight = workspace.clientWidth;
+        let maxBottom = workspace.clientHeight;
+        const wsRect = workspace.getBoundingClientRect(); // Принудительный перерасчет стилей
+
+        Array.from(workspace.children).forEach(el => {
+            if (el.style.display === 'none') return;
+            const rect = el.getBoundingClientRect();
+            // Вычисляем координату границы элемента относительно левого верхнего угла workspace
+            const rightEdge = rect.right - wsRect.left;
+            const bottomEdge = rect.bottom - wsRect.top;
+            
+            if (rightEdge > maxRight) maxRight = rightEdge;
+            if (bottomEdge > maxBottom) maxBottom = bottomEdge;
+        });
+
+        // Временно растягиваем workspace до габаритов самого дальнего элемента (+ 50px отступа)
+        const finalWidth = maxRight + 50;
+        const finalHeight = maxBottom + 50;
+        workspace.style.width = finalWidth + 'px';
+        workspace.style.height = finalHeight + 'px';
+        workspace.style.overflow = 'visible'; // отключаем обрезку вне экрана
+
+        // Подготавливаем внешний вид
         workspace.style.backgroundImage = 'none';
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
         
-        // --- ВАШ ОРИГИНАЛЬНЫЙ КОД ГЕНЕРАЦИИ ---
+        // 4. ДЕЛАЕМ СКРИНШОТ РАСТЯНУТОЙ СХЕМЫ
         const canvasScheme = await html2canvas(workspace, { 
-    scale: 2, 
-    windowHeight: workspace.scrollHeight,
-    useCORS: true,       // <--- ДОБАВИТЬ ЭТО
-    allowTaint: false    // <--- И ЭТО
-});
-
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            // Прямо указываем холсту использовать новые увеличенные размеры
+            width: finalWidth,
+            height: finalHeight
+        });
         
+        // 5. ГЕНЕРАЦИЯ ТАБЛИЦ
         const schemaTbody = document.querySelector('#schematic-table tbody');
         schemaTbody.innerHTML = '';
         if(wiringManagerV2.wires.length === 0) {
@@ -9625,67 +9655,76 @@ function getTerminalTag(terminalId) {
                 const fromTag = getTerminalTag(w.from);
                 const toTag = getTerminalTag(w.to);
                 const wireInfo = (w.type === 'comb') ? 'Гребенка' : `Провод ${w.width}мм² (${w.color})`;
-                // Если layers тоже не найдет, поправьте на нужный массив, например wiringManagerV2.layers
                 const layerName = typeof layers !== 'undefined' ? (layers.find(l => l.id === w.layerId)?.name || '') : '';
                 row.innerHTML = `<td>${fromName} [${fromTag}]</td><td>${wireInfo}${layerName ? ` [${layerName}]` : ''}</td><td>${toName} [${toTag}]</td>`;
                 schemaTbody.appendChild(row);
             });
         }
-        const canvasSchematic = await html2canvas(document.getElementById('schematic-table'), { 
-    scale: 2,
-    useCORS: true        // <--- ДОБАВИТЬ ЭТО
-});
-        const canvasTable = await html2canvas(document.getElementById('estimate-table'), { 
-    scale: 2, 
-    backgroundColor: '#ffffff',
-    useCORS: true        // <--- ДОБАВИТЬ ЭТО
-});
+        const canvasSchematic = await html2canvas(document.getElementById('schematic-table'), { scale: 2, useCORS: true });
+        const canvasTable = await html2canvas(document.getElementById('estimate-table'), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
         
-        // Возвращаем видимость элементов
+        // Возвращаем видимость служебных элементов для работы
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
-        // Обратите внимание: я возвращаю вашу старую сетку, если у вас другой CSS для неё, поправьте
         workspace.style.backgroundImage = `
             linear-gradient(rgba(0, 0, 0, 0.1) 1px, transparent 1px),
             linear-gradient(90deg, rgba(0, 0, 0, 0.1) 1px, transparent 1px)
         `;
         
+        // 6. СОЗДАЕМ PDF (КНИЖНАЯ ОРИЕНТАЦИЯ - Portrait, формат А4)
         const { jsPDF } = window.jspdf;
-        const doc = new jsPDF('landscape');
-        const pdfW = doc.internal.pageSize.getWidth();
-        const pdfH = doc.internal.pageSize.getHeight();
+        const doc = new jsPDF('p', 'mm', 'a4'); // 'p' означает Portrait
+        const pdfW = doc.internal.pageSize.getWidth(); // Для А4 это 210 мм
+        const pdfH = doc.internal.pageSize.getHeight(); // Для А4 это 297 мм
         
+        // Вставляем схему
         const imgScheme = canvasScheme.toDataURL('image/png');
-        const schemeH = (canvasScheme.height * pdfW) / canvasScheme.width;
-        if (schemeH > pdfH) { 
-            const ratio = pdfH / schemeH; 
-            doc.addImage(imgScheme, 'PNG', 0, 0, pdfW * ratio, pdfH); 
-        } else {
-            doc.addImage(imgScheme, 'PNG', 0, 0, pdfW, schemeH);
+        const margin = 10; // Отступы по краям страницы (10 мм со всех сторон)
+        const maxImageW = pdfW - margin * 2;
+        const maxImageH = pdfH - margin * 2;
+        
+        // Умное пропорциональное масштабирование (чтобы не сплющило картинку)
+        let schemeW = maxImageW;
+        let schemeH = (canvasScheme.height * maxImageW) / canvasScheme.width;
+        
+        if (schemeH > maxImageH) {
+            // Если схема получилась слишком длинной (в высоту) - ужимаем по высоте
+            schemeH = maxImageH;
+            schemeW = (canvasScheme.width * maxImageH) / canvasScheme.height;
         }
         
+        // Центрируем схему на листе (если она узкая или короткая)
+        const offsetX = margin + (maxImageW - schemeW) / 2;
+        const offsetY = margin + (maxImageH - schemeH) / 2;
+        
+        doc.addImage(imgScheme, 'PNG', offsetX, offsetY, schemeW, schemeH);
+        
+        // Вставляем таблицу №1
         doc.addPage();
         doc.setFontSize(16);
         doc.text('Таблица коммутации (Схема цепи)', 14, 20);
         const imgSch = canvasSchematic.toDataURL('image/png');
-        const schH = (canvasSchematic.height * 190) / canvasSchematic.width;
-        doc.addImage(imgSch, 'PNG', 14, 30, 190, schH);
+        const schW = Math.min(190, maxImageW); // Таблица не шире 190мм
+        const schH = (canvasSchematic.height * schW) / canvasSchematic.width;
+        doc.addImage(imgSch, 'PNG', 14, 30, schW, schH);
         
+        // Вставляем таблицу №2
         doc.addPage();
         doc.text('Смета материалов', 14, 20);
         const imgTable = canvasTable.toDataURL('image/png');
-        const tablePdfW = 180; 
+        const tablePdfW = Math.min(190, maxImageW); 
         const tablePdfH = (canvasTable.height * tablePdfW) / canvasTable.width;
         doc.addImage(imgTable, 'PNG', 14, 30, tablePdfW, tablePdfH);
         
         doc.save('shield_v30.pdf');
-        // --- КОНЕЦ ВАШЕГО ОРИГИНАЛЬНОГО КОДА ---
 
     } catch (error) {
         console.error("Ошибка при генерации PDF:", error);
     } finally {
-        // 3. ВОЗВРАЩАЕМ МАСШТАБ И СДВИГ ОБРАТНО
-        // Этот блок выполнится в любом случае (даже если генерация упадет с ошибкой), 
-        // чтобы холст не остался сломанным.
+        // 7. ВОЗВРАЩАЕМ ГАБАРИТЫ, МАСШТАБ И СДВИГ ОБРАТНО (мгновенно для пользователя)
+        workspace.style.width = savedWidth;
+        workspace.style.height = savedHeight;
+        workspace.style.overflow = savedOverflow;
+
         if (typeof currentScale !== 'undefined') currentScale = savedScale;
         if (typeof panX !== 'undefined') panX = savedPanX;
         if (typeof panY !== 'undefined') panY = savedPanY;
