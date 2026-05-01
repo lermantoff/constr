@@ -9558,219 +9558,270 @@ function getModuleDisplayName(moduleEl) {
 }
 
     // ===================== ЭКСПОРТ PDF =====================
-    
-    // Вспомогательная функция для получения названия модуля V2 (для таблицы)
     function getComponentName(terminalId) {
-        if (!terminalId) return 'Неизвестно';
-        const terminal = document.getElementById(terminalId);
-        if (!terminal) return String(terminalId);
+    if (!terminalId) return 'Неизвестно';
+    // Находим элемент контакта
+    const terminal = typeof terminalId === 'string' ? document.getElementById(terminalId) : terminalId;
+    if (!terminal) return String(terminalId);
 
-        // Если это главный ввод схемы
-        if (terminal.classList.contains('supply-terminal') || terminal.id.includes('supply')) {
-            return 'Вводной щит (Главный ввод)';
-        }
-
-        // Ищем принадлежность к модулю V2
-        const moduleV2 = terminal.closest('.module-v2');
-        if (moduleV2 && typeof moduleManagerV2 !== 'undefined') {
-            const moduleId = moduleV2.dataset.moduleId;
-            const config = moduleManagerV2.configs.get(moduleId);
-            if (config) {
-                // Если пользователь вписал свой маркер - покажем его
-                const customLabel = config.params?.labelText ? ` [Маркер: ${config.params.labelText}]` : '';
-                return `${config.brand || ''} ${config.series || ''} ${config.name || ''}${customLabel}`.trim();
-            }
-        }
-        return String(terminalId);
+    // Ищем родительский блок модуля (у вас может быть класс .module, .device, .component)
+    const component = terminal.closest('.module, .device, .component, .item');
+    if (component) {
+        // Пытаемся взять имя из названия или атрибутов
+        const titleEl = component.querySelector('.title, .name, .module-name');
+        if (titleEl) return titleEl.innerText.trim();
+        if (component.dataset.title) return component.dataset.title;
+        if (component.dataset.name) return component.dataset.name;
+        return component.id; // Если имени нет, возвращаем ID
     }
+    return String(terminalId);
+}
 
-    // Вспомогательная функция для получения маркировки клеммы (L, N, PE...)
-    function getTerminalTag(terminalId) {
-        if (!terminalId) return '-';
-        const terminal = document.getElementById(terminalId);
-        if (!terminal) return '-';
-        return terminal.dataset.tag || terminal.dataset.label || '-';
-    }
+function getTerminalTag(terminalId) {
+    if (!terminalId) return '-';
+    const terminal = typeof terminalId === 'string' ? document.getElementById(terminalId) : terminalId;
+    if (!terminal) return '-';
 
+    // Пытаемся взять метку контакта (L, N, PE и т.д.)
+    return terminal.dataset.tag || terminal.dataset.label || terminal.title || terminal.innerText || '*';
+}
     async function savePDF() {
-        // 1. СОХРАНЯЕМ ТЕКУЩЕЕ СОСТОЯНИЕ (масштаб, сдвиг, размеры)
-        const savedTransform = workspace.style.transform;
-        const savedScale = typeof window.zoomScale !== 'undefined' ? window.zoomScale : 1;
-        const savedPanX = typeof window.panX !== 'undefined' ? window.panX : 0;
-        const savedPanY = typeof window.panY !== 'undefined' ? window.panY : 0;
+    // 1. СОХРАНЯЕМ ТЕКУЩЕЕ СОСТОЯНИЕ (чтобы вернуть все обратно)
+    const savedTransform = workspace.style.transform;
+    const savedScale = typeof currentScale !== 'undefined' ? currentScale : 1;
+    const savedPanX = typeof panX !== 'undefined' ? panX : 0;
+    const savedPanY = typeof panY !== 'undefined' ? panY : 0;
 
-        const savedWidth = workspace.style.width;
-        const savedHeight = workspace.style.height;
-        const savedOverflow = workspace.style.overflow;
+    // Сохраняем исходные габариты и стили контейнера
+    const savedWidth = workspace.style.width;
+    const savedHeight = workspace.style.height;
+    const savedOverflow = workspace.style.overflow;
 
-        try {
-            // 2. СБРАСЫВАЕМ МАСШТАБ И СДВИГ ДЛЯ СКРИНШОТА
-            window.zoomScale = 1;
-            window.panX = 0;
-            window.panY = 0;
-            workspace.style.transform = `translate(0px, 0px) scale(1)`;
+    try {
+        // 2. СБРАСЫВАЕМ МАСШТАБ И СДВИГ
+        if (typeof currentScale !== 'undefined') currentScale = 1;
+        if (typeof panX !== 'undefined') panX = 0;
+        if (typeof panY !== 'undefined') panY = 0;
+        workspace.style.transform = `translate(0px, 0px) scale(1)`;
 
-            // 3. ВЫЧИСЛЯЕМ ГАБАРИТНЫЙ КОНТЕЙНЕР
-            let maxRight = workspace.clientWidth;
-            let maxBottom = workspace.clientHeight;
-            const wsRect = workspace.getBoundingClientRect(); 
+        // 3. ВЫЧИСЛЯЕМ ГАБАРИТНЫЙ КОНТЕЙНЕР (чтобы ничего не обрезалось)
+        // Ищем самые крайние правые и нижние точки всех элементов на холсте
+        let maxRight = workspace.clientWidth;
+        let maxBottom = workspace.clientHeight;
+        const wsRect = workspace.getBoundingClientRect(); // Принудительный перерасчет стилей
 
-            // Пробегаемся по модулям, рейкам и проводам
-            Array.from(workspace.children).forEach(el => {
-                if (el.style.display === 'none' || el.id === 'selectionRectangle' || el.classList.contains('selection-box')) return;
-                const rect = el.getBoundingClientRect();
-                const rightEdge = rect.right - wsRect.left;
-                const bottomEdge = rect.bottom - wsRect.top;
-                
-                if (rightEdge > maxRight) maxRight = rightEdge;
-                if (bottomEdge > maxBottom) maxBottom = bottomEdge;
+        Array.from(workspace.children).forEach(el => {
+            if (el.style.display === 'none') return;
+            const rect = el.getBoundingClientRect();
+            // Вычисляем координату границы элемента относительно левого верхнего угла workspace
+            const rightEdge = rect.right - wsRect.left;
+            const bottomEdge = rect.bottom - wsRect.top;
+            
+            if (rightEdge > maxRight) maxRight = rightEdge;
+            if (bottomEdge > maxBottom) maxBottom = bottomEdge;
+        });
+
+        // Временно растягиваем workspace до габаритов самого дальнего элемента (+ 50px отступа)
+        const finalWidth = maxRight + 50;
+        const finalHeight = maxBottom + 50;
+        workspace.style.width = finalWidth + 'px';
+        workspace.style.height = finalHeight + 'px';
+        workspace.style.overflow = 'visible'; // отключаем обрезку вне экрана
+
+        // Подготавливаем внешний вид
+        workspace.style.backgroundImage = 'none';
+        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
+        
+        const markers = [];
+        workspace.querySelectorAll('input.module-label-input').forEach(input => {
+            const div = document.createElement('div');
+            // Копируем все ваши стили (желтый фон, рамку, позицию)
+            div.style.cssText = input.style.cssText; 
+            div.style.boxSizing = 'border-box'; // Чтобы рамка не ломала размер
+            // Если текст введен - пишем его, если пусто - ничего
+            div.innerText = input.value; 
+            div.className = input.className; // На всякий случай копируем классы
+            
+            // Вставляем div вместо инпута, а инпут временно прячем
+            input.parentNode.insertBefore(div, input);
+            input.style.display = 'none';
+            markers.push({ input, div });
+        });
+        
+        // 4. ДЕЛАЕМ СКРИНШОТ РАСТЯНУТОЙ СХЕМЫ
+        const canvasScheme = await html2canvas(workspace, { 
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            // Прямо указываем холсту использовать новые увеличенные размеры
+            width: finalWidth,
+            height: finalHeight
+        });
+        
+        // 5. ГЕНЕРАЦИЯ ТАБЛИЦ
+        const schemaTbody = document.querySelector('#schematic-table tbody');
+        schemaTbody.innerHTML = '';
+        if(wiringManagerV2.wires.length === 0) {
+            schemaTbody.innerHTML = '<tr><td colspan="3">Нет соединений</td></tr>';
+        } else {
+            wiringManagerV2.wires.forEach(w => {
+                const row = document.createElement('tr');
+                const fromName = getComponentName(w.from);
+                const toName = getComponentName(w.to);
+                const fromTag = getTerminalTag(w.from);
+                const toTag = getTerminalTag(w.to);
+                const wireInfo = (w.type === 'comb') ? 'Гребенка' : `Провод ${w.width}мм² (${w.color})`;
+                const layerName = typeof layers !== 'undefined' ? (layers.find(l => l.id === w.layerId)?.name || '') : '';
+                row.innerHTML = `<td>${fromName} [${fromTag}]</td><td>${wireInfo}${layerName ? ` [${layerName}]` : ''}</td><td>${toName} [${toTag}]</td>`;
+                schemaTbody.appendChild(row);
             });
-
-            // Расширяем холст с запасом в 50px
-            const finalWidth = maxRight + 50;
-            const finalHeight = maxBottom + 50;
-            workspace.style.width = finalWidth + 'px';
-            workspace.style.height = finalHeight + 'px';
-            workspace.style.overflow = 'visible'; 
-
-            // Убираем сетку и точки изгиба
-            workspace.style.backgroundImage = 'none';
-            document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
-            
-            // ФИКС МАРКЕРОВ: Временно заменяем input на div
-            const markers = [];
-            workspace.querySelectorAll('input.module-label-input').forEach(input => {
-                const div = document.createElement('div');
-                div.style.cssText = input.style.cssText; 
-                div.style.boxSizing = 'border-box'; 
-                div.innerText = input.value || ''; 
-                div.className = input.className; 
-                
-                input.parentNode.insertBefore(div, input);
-                input.style.display = 'none';
-                markers.push({ input, div });
-            });
-            
-            // 4. ДЕЛАЕМ СКРИНШОТ
-            const canvasScheme = await html2canvas(workspace, { 
-                scale: 2, // высокое качество
-                useCORS: true,
-                allowTaint: false,
-                width: finalWidth,
-                height: finalHeight,
-                backgroundColor: '#f4f4f9' // заливаем фон
-            });
-            
-            // 5. ГЕНЕРАЦИЯ ТАБЛИЦЫ СОЕДИНЕНИЙ V2
-            const schemaTbody = document.querySelector('#schematic-table tbody');
-            schemaTbody.innerHTML = '';
-            if(wiringManagerV2.wires.length === 0) {
-                schemaTbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">Нет соединений</td></tr>';
-            } else {
-                wiringManagerV2.wires.forEach(w => {
-                    const row = document.createElement('tr');
-                    const fromName = getComponentName(w.from);
-                    const toName = getComponentName(w.to);
-                    const fromTag = getTerminalTag(w.from);
-                    const toTag = getTerminalTag(w.to);
-                    const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `Провод ${w.thickness}мм² (${w.color})`;
-                    const layerName = layers.find(l => l.id === w.layerId)?.name || 'Основной';
-                    row.innerHTML = `<td>${fromName} [${fromTag}]</td><td>${wireInfo} [Слой: ${layerName}]</td><td>${toName} [${toTag}]</td>`;
-                    schemaTbody.appendChild(row);
-                });
-            }
-
-            const canvasSchematic = await html2canvas(document.getElementById('schematic-table'), { scale: 2, useCORS: true });
-            const canvasTable = await html2canvas(document.getElementById('estimate-table'), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
-            
-            // 6. СОЗДАЕМ PDF (Книжная ориентация А4)
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF('p', 'mm', 'a4'); 
-            const pdfW = doc.internal.pageSize.getWidth(); 
-            const pdfH = doc.internal.pageSize.getHeight(); 
-            
-            // Вставляем схему по центру А4
-            const imgScheme = canvasScheme.toDataURL('image/png');
-            const margin = 10; 
-            const maxImageW = pdfW - margin * 2;
-            const maxImageH = pdfH - margin * 2;
-            
-            let schemeW = maxImageW;
-            let schemeH = (canvasScheme.height * maxImageW) / canvasScheme.width;
-            
-            // Если схема слишком длинная, подгоняем по высоте листа
-            if (schemeH > maxImageH) {
-                schemeH = maxImageH;
-                schemeW = (canvasScheme.width * maxImageH) / canvasScheme.height;
-            }
-            
-            const offsetX = margin + (maxImageW - schemeW) / 2;
-            const offsetY = margin + (maxImageH - schemeH) / 2;
-            
-            doc.addImage(imgScheme, 'PNG', offsetX, offsetY, schemeW, schemeH);
-            
-            // Вставляем таблицу соединений
-            doc.addPage();
-            doc.setFontSize(16);
-            doc.text('Таблица коммутации (Схема цепи)', 14, 20);
-            const imgSch = canvasSchematic.toDataURL('image/png');
-            const schW = Math.min(190, maxImageW); 
-            const schH = (canvasSchematic.height * schW) / canvasSchematic.width;
-            doc.addImage(imgSch, 'PNG', 14, 30, schW, schH);
-            
-            // Вставляем смету
-            doc.addPage();
-            doc.text('Смета материалов', 14, 20);
-            const imgTable = canvasTable.toDataURL('image/png');
-            const tablePdfW = Math.min(190, maxImageW); 
-            const tablePdfH = (canvasTable.height * tablePdfW) / canvasTable.width;
-            doc.addImage(imgTable, 'PNG', 14, 30, tablePdfW, tablePdfH);
-            
-            // Сохраняем файл
-            doc.save('shield_scheme.pdf');
-
-        } catch (error) {
-            console.error("Ошибка при генерации PDF:", error);
-            alert("Не удалось создать PDF. Проверьте консоль браузера.");
-        } finally {
-            // 7. ВОЗВРАЩАЕМ ИНТЕРФЕЙС В ИСХОДНОЕ СОСТОЯНИЕ
-            if (typeof markers !== 'undefined') {
-                markers.forEach(m => {
-                    m.input.style.display = ''; 
-                    if(m.div.parentNode) m.div.remove();             
-                });
-            }
-
-            workspace.style.width = savedWidth;
-            workspace.style.height = savedHeight;
-            workspace.style.overflow = savedOverflow;
-
-            window.zoomScale = savedScale;
-            window.panX = savedPanX;
-            window.panY = savedPanY;
-            
-            workspace.style.transform = savedTransform;
-            
-            document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
         }
+        const canvasSchematic = await html2canvas(document.getElementById('schematic-table'), { scale: 2, useCORS: true });
+        const canvasTable = await html2canvas(document.getElementById('estimate-table'), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+        
+        // Возвращаем видимость служебных элементов для работы
+        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
+        workspace.style.backgroundImage = `
+            linear-gradient(rgba(0, 0, 0, 0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0, 0, 0, 0.1) 1px, transparent 1px)
+        `;
+        
+        // 6. СОЗДАЕМ PDF (КНИЖНАЯ ОРИЕНТАЦИЯ - Portrait, формат А4)
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('p', 'mm', 'a4'); // 'p' означает Portrait
+        const pdfW = doc.internal.pageSize.getWidth(); // Для А4 это 210 мм
+        const pdfH = doc.internal.pageSize.getHeight(); // Для А4 это 297 мм
+        
+        // Вставляем схему
+        const imgScheme = canvasScheme.toDataURL('image/png');
+        const margin = 10; // Отступы по краям страницы (10 мм со всех сторон)
+        const maxImageW = pdfW - margin * 2;
+        const maxImageH = pdfH - margin * 2;
+        
+        // Умное пропорциональное масштабирование (чтобы не сплющило картинку)
+        let schemeW = maxImageW;
+        let schemeH = (canvasScheme.height * maxImageW) / canvasScheme.width;
+        
+        if (schemeH > maxImageH) {
+            // Если схема получилась слишком длинной (в высоту) - ужимаем по высоте
+            schemeH = maxImageH;
+            schemeW = (canvasScheme.width * maxImageH) / canvasScheme.height;
+        }
+        
+        // Центрируем схему на листе (если она узкая или короткая)
+        const offsetX = margin + (maxImageW - schemeW) / 2;
+        const offsetY = margin + (maxImageH - schemeH) / 2;
+        
+        doc.addImage(imgScheme, 'PNG', offsetX, offsetY, schemeW, schemeH);
+        
+        // Вставляем таблицу №1
+        doc.addPage();
+        doc.setFontSize(16);
+        doc.text('Таблица коммутации (Схема цепи)', 14, 20);
+        const imgSch = canvasSchematic.toDataURL('image/png');
+        const schW = Math.min(190, maxImageW); // Таблица не шире 190мм
+        const schH = (canvasSchematic.height * schW) / canvasSchematic.width;
+        doc.addImage(imgSch, 'PNG', 14, 30, schW, schH);
+        
+        // Вставляем таблицу №2
+        doc.addPage();
+        doc.text('Смета материалов', 14, 20);
+        const imgTable = canvasTable.toDataURL('image/png');
+        const tablePdfW = Math.min(190, maxImageW); 
+        const tablePdfH = (canvasTable.height * tablePdfW) / canvasTable.width;
+        doc.addImage(imgTable, 'PNG', 14, 30, tablePdfW, tablePdfH);
+        
+        doc.save('shield_v30.pdf');
+
+    } catch (error) {
+        console.error("Ошибка при генерации PDF:", error);
+    } finally {
+        // ---- ВОЗВРАЩАЕМ МАРКЕРЫ ОБРАТНО ----
+        if (typeof markers !== 'undefined') {
+            markers.forEach(m => {
+                m.input.style.display = ''; // Показываем инпут
+                m.div.remove();             // Удаляем временный div
+            });
+        }
+        // ------------------------------------
+
+        // 7. ВОЗВРАЩАЕМ ГАБАРИТЫ, МАСШТАБ И СДВИГ ОБРАТНО
+        workspace.style.width = savedWidth;
+        workspace.style.height = savedHeight;
+        workspace.style.overflow = savedOverflow;
+
+        if (typeof currentScale !== 'undefined') currentScale = savedScale;
+        if (typeof panX !== 'undefined') panX = savedPanX;
+        if (typeof panY !== 'undefined') panY = savedPanY;
+        
+        workspace.style.transform = savedTransform;
+        
+        // Возвращаем видимость точек и фон (если вы их не возвращали ранее)
+        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
+        workspace.style.backgroundImage = `
+            linear-gradient(rgba(0, 0, 0, 0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0, 0, 0, 0.1) 1px, transparent 1px)
+        `;
+    }
+}
+
+// ===================== СЧЁТЧИК FPS =====================
+(function() {
+    const fpsElement = document.getElementById('fps-counter');
+    if (!fpsElement) return;
+
+    let frameCount = 0;
+    let lastTime = performance.now();
+    let fps = 0;
+
+    function updateFPS() {
+        frameCount++;
+        const now = performance.now();
+        const delta = now - lastTime;
+        
+        // Обновляем счётчик каждые 500 мс
+        if (delta >= 500) {
+            fps = Math.round((frameCount * 1000) / delta);
+            fpsElement.textContent = `FPS: ${fps}`;
+            
+            // Цветовая индикация
+            if (fps >= 50) {
+                fpsElement.style.color = '#2ecc71'; // зелёный
+            } else if (fps >= 30) {
+                fpsElement.style.color = '#f1c40f'; // жёлтый
+            } else {
+                fpsElement.style.color = '#e74c3c'; // красный
+            }
+            
+            frameCount = 0;
+            lastTime = now;
+        }
+        
+        requestAnimationFrame(updateFPS);
     }
 
+    requestAnimationFrame(updateFPS);
+})();
     // ===================== ИНИЦИАЛИЗАЦИЯ =====================
     window.addEventListener('DOMContentLoaded', () => {
-        initLayers();
-        initFavoritesV2();
-        
-        moduleSelectorV2 = new ModuleSelectorUI('module-selector-container', moduleManagerV2);
-        
-        const dinRailManagerV2 = new DinRailManagerV2(moduleManagerV2);
-        window.dinRailManagerV2 = dinRailManagerV2;
-        
-        new DinRailSelectorUI('din-rail-selector-container', dinRailManagerV2);
-        
-        setTimeout(() => {
-            if (tagManagerV2) tagManagerV2.updateAllTags();
-        }, 500);
-    });
+    initLayers();
+    initFavoritesV2();
+    
+    moduleSelectorV2 = new ModuleSelectorUI('module-selector-container', moduleManagerV2);
+    
+    // Создаём менеджер реек
+    const dinRailManagerV2 = new DinRailManagerV2(moduleManagerV2);
+    window.dinRailManagerV2 = dinRailManagerV2;
+    
+    // Создаём UI селектора реек
+    new DinRailSelectorUI('din-rail-selector-container', dinRailManagerV2);
+    
+    setTimeout(() => {
+        if (tagManagerV2) {
+            tagManagerV2.updateAllTags();
+        }
+    }, 500);
+});
 </script>
 </body>
 </html>
