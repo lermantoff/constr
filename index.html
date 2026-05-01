@@ -9737,7 +9737,16 @@ function getTerminalTag(terminalId) {
     } catch (error) {
         console.error("Ошибка при генерации PDF:", error);
     } finally {
-        // 7. ВОЗВРАЩАЕМ ГАБАРИТЫ, МАСШТАБ И СДВИГ ОБРАТНО (мгновенно для пользователя)
+        // ---- ВОЗВРАЩАЕМ МАРКЕРЫ ОБРАТНО ----
+        if (typeof markers !== 'undefined') {
+            markers.forEach(m => {
+                m.input.style.display = ''; // Показываем инпут
+                m.div.remove();             // Удаляем временный div
+            });
+        }
+        // ------------------------------------
+
+        // 7. ВОЗВРАЩАЕМ ГАБАРИТЫ, МАСШТАБ И СДВИГ ОБРАТНО
         workspace.style.width = savedWidth;
         workspace.style.height = savedHeight;
         workspace.style.overflow = savedOverflow;
@@ -9747,6 +9756,13 @@ function getTerminalTag(terminalId) {
         if (typeof panY !== 'undefined') panY = savedPanY;
         
         workspace.style.transform = savedTransform;
+        
+        // Возвращаем видимость точек и фон (если вы их не возвращали ранее)
+        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
+        workspace.style.backgroundImage = `
+            linear-gradient(rgba(0, 0, 0, 0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0, 0, 0, 0.1) 1px, transparent 1px)
+        `;
     }
 }
 // ===================== СЧЁТЧИК FPS =====================
