@@ -9558,6 +9558,33 @@ function getModuleDisplayName(moduleEl) {
 }
 
     // ===================== ЭКСПОРТ PDF =====================
+    function getComponentName(terminalId) {
+    if (!terminalId) return 'Неизвестно';
+    // Находим элемент контакта
+    const terminal = typeof terminalId === 'string' ? document.getElementById(terminalId) : terminalId;
+    if (!terminal) return String(terminalId);
+
+    // Ищем родительский блок модуля (у вас может быть класс .module, .device, .component)
+    const component = terminal.closest('.module, .device, .component, .item');
+    if (component) {
+        // Пытаемся взять имя из названия или атрибутов
+        const titleEl = component.querySelector('.title, .name, .module-name');
+        if (titleEl) return titleEl.innerText.trim();
+        if (component.dataset.title) return component.dataset.title;
+        if (component.dataset.name) return component.dataset.name;
+        return component.id; // Если имени нет, возвращаем ID
+    }
+    return String(terminalId);
+}
+
+function getTerminalTag(terminalId) {
+    if (!terminalId) return '-';
+    const terminal = typeof terminalId === 'string' ? document.getElementById(terminalId) : terminalId;
+    if (!terminal) return '-';
+
+    // Пытаемся взять метку контакта (L, N, PE и т.д.)
+    return terminal.dataset.tag || terminal.dataset.label || terminal.title || terminal.innerText || '*';
+}
     async function savePDF() {
     // 1. СОХРАНЯЕМ ТЕКУЩИЙ МАСШТАБ И СДВИГ
     const savedTransform = workspace.style.transform;
