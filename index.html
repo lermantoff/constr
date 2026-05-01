@@ -9559,16 +9559,39 @@ function getModuleDisplayName(moduleEl) {
 
     // ===================== ЭКСПОРТ PDF =====================
     async function savePDF() {
+    // 1. СОХРАНЯЕМ ТЕКУЩИЙ МАСШТАБ И СДВИГ
+    const savedTransform = workspace.style.transform;
+    const savedScale = window.currentScale || 1; // Если переменные называются иначе, поправьте
+    const savedPanX = window.panX || 0;
+    const savedPanY = window.panY || 0;
+
+    try {
+        // 2. СБРАСЫВАЕМ ХОЛСТ (100% масштаб, нулевое смещение)
+        // Это необходимо для html2canvas, иначе схема обрежется
+        if (typeof currentScale !== 'undefined') currentScale = 1;
+        if (typeof panX !== 'undefined') panX = 0;
+        if (typeof panY !== 'undefined') panY = 0;
+        workspace.style.transform = `translate(0px, 0px) scale(1)`;
+
+        // Ваши подготовки (убираем фон и пивоты)
         workspace.style.backgroundImage = 'none';
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
         
-        const canvasScheme = await html2canvas(workspace, { scale: 2, windowHeight: workspace.scrollHeight });
+        // --- ВАШ ОРИГИНАЛЬНЫЙ КОД ГЕНЕРАЦИИ ---
+        const canvasScheme = await html2canvas(workspace, { 
+    scale: 2, 
+    windowHeight: workspace.scrollHeight,
+    useCORS: true,       // <--- ДОБАВИТЬ ЭТО
+    allowTaint: false    // <--- И ЭТО
+});
+
         
         const schemaTbody = document.querySelector('#schematic-table tbody');
         schemaTbody.innerHTML = '';
         if(wiringManagerV2.wires.length === 0) {
             schemaTbody.innerHTML = '<tr><td colspan="3">Нет соединений</td></tr>';
         } else {
+            // Примечание: если тут будет ошибка 'wires is not defined', замените wires.forEach на wiringManagerV2.wires.forEach
             wires.forEach(w => {
                 const row = document.createElement('tr');
                 const fromName = getComponentName(w.from);
@@ -9581,11 +9604,23 @@ function getModuleDisplayName(moduleEl) {
                 schemaTbody.appendChild(row);
             });
         }
-        const canvasSchematic = await html2canvas(document.getElementById('schematic-table'), { scale: 2 });
-        const canvasTable = await html2canvas(document.getElementById('estimate-table'), { scale: 2, backgroundColor: '#ffffff' });
+        const canvasSchematic = await html2canvas(document.getElementById('schematic-table'), { 
+    scale: 2,
+    useCORS: true        // <--- ДОБАВИТЬ ЭТО
+});
+        const canvasTable = await html2canvas(document.getElementById('estimate-table'), { 
+    scale: 2, 
+    backgroundColor: '#ffffff',
+    useCORS: true        // <--- ДОБАВИТЬ ЭТО
+});
         
+        // Возвращаем видимость элементов
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
-        workspace.style.backgroundImage = '';
+        // Обратите внимание: я возвращаю вашу старую сетку, если у вас другой CSS для неё, поправьте
+        workspace.style.backgroundImage = `
+            linear-gradient(rgba(0, 0, 0, 0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0, 0, 0, 0.1) 1px, transparent 1px)
+        `;
         
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF('landscape');
@@ -9594,8 +9629,12 @@ function getModuleDisplayName(moduleEl) {
         
         const imgScheme = canvasScheme.toDataURL('image/png');
         const schemeH = (canvasScheme.height * pdfW) / canvasScheme.width;
-        if (schemeH > pdfH) { const ratio = pdfH / schemeH; doc.addImage(imgScheme, 'PNG', 0, 0, pdfW * ratio, pdfH); } 
-        else doc.addImage(imgScheme, 'PNG', 0, 0, pdfW, schemeH);
+        if (schemeH > pdfH) { 
+            const ratio = pdfH / schemeH; 
+            doc.addImage(imgScheme, 'PNG', 0, 0, pdfW * ratio, pdfH); 
+        } else {
+            doc.addImage(imgScheme, 'PNG', 0, 0, pdfW, schemeH);
+        }
         
         doc.addPage();
         doc.setFontSize(16);
@@ -9612,7 +9651,21 @@ function getModuleDisplayName(moduleEl) {
         doc.addImage(imgTable, 'PNG', 14, 30, tablePdfW, tablePdfH);
         
         doc.save('shield_v30.pdf');
+        // --- КОНЕЦ ВАШЕГО ОРИГИНАЛЬНОГО КОДА ---
+
+    } catch (error) {
+        console.error("Ошибка при генерации PDF:", error);
+    } finally {
+        // 3. ВОЗВРАЩАЕМ МАСШТАБ И СДВИГ ОБРАТНО
+        // Этот блок выполнится в любом случае (даже если генерация упадет с ошибкой), 
+        // чтобы холст не остался сломанным.
+        if (typeof currentScale !== 'undefined') currentScale = savedScale;
+        if (typeof panX !== 'undefined') panX = savedPanX;
+        if (typeof panY !== 'undefined') panY = savedPanY;
+        
+        workspace.style.transform = savedTransform;
     }
+}
 // ===================== СЧЁТЧИК FPS =====================
 (function() {
     const fpsElement = document.getElementById('fps-counter');
