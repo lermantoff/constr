@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.10.1</title>
+    <title>Конструктор Щита v4.10.2</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9652,13 +9652,11 @@ async function generateProfessionalPDF() {
     const modal = document.getElementById('pdfProjectModal');
     const confirmBtn = modal.querySelector('.confirm');
     
-    // Блокируем кнопку, чтобы не нажали дважды
     const originalBtnText = confirmBtn.innerText;
     confirmBtn.innerText = 'Генерация...';
     confirmBtn.disabled = true;
 
     try {
-        // Собираем данные из формы
         const projName = document.getElementById('pdfProjectName').value || 'Проект электрощита';
         const customer = document.getElementById('pdfCustomer').value || 'Не указан';
         const designer = document.getElementById('pdfDesigner').value || 'Не указан';
@@ -9667,19 +9665,16 @@ async function generateProfessionalPDF() {
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF('p', 'mm', 'a4'); 
         
-        // Загружаем русский шрифт!
+        // Загружаем русский шрифт
         await loadCyrillicFont(doc);
         
         // --- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ---
         doc.setLineWidth(0.5);
-        doc.rect(10, 10, 190, 277); // Рамка
-        
+        doc.rect(10, 10, 190, 277); 
         doc.setFontSize(24);
         doc.text("ПРОЕКТНАЯ ДОКУМЕНТАЦИЯ", 105, 100, { align: "center" });
-        
         doc.setFontSize(16);
         doc.text(`Объект: ${projName}`, 105, 120, { align: "center" });
-        
         doc.setFontSize(12);
         doc.text(`Заказчик: ${customer}`, 105, 140, { align: "center" });
         doc.text(`Проектировщик: ${designer}`, 105, 150, { align: "center" });
@@ -9696,9 +9691,44 @@ async function generateProfessionalPDF() {
         window.zoomScale = 1; window.panX = 0; window.panY = 0;
         workspace.style.transform = `translate(0px, 0px) scale(1)`;
         workspace.style.backgroundImage = 'none';
+        
+        // Прячем точки подключения
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
         
-        // Вычисляем габариты схемы
+        // РЕШЕНИЕ ПРОБЛЕМЫ №2: Превращаем input'ы в текст перед скриншотом
+        const originalInputs = [];
+        workspace.querySelectorAll('input[type="text"]').forEach(input => {
+            const val = input.value.trim();
+            if (val !== '') {
+                const textSpan = document.createElement('div');
+                textSpan.innerText = val;
+                
+                // Копируем стили из input, чтобы выглядело идентично
+                const style = window.getComputedStyle(input);
+                textSpan.style.position = 'absolute';
+                textSpan.style.left = input.style.left || input.offsetLeft + 'px';
+                textSpan.style.top = input.style.top || input.offsetTop + 'px';
+                textSpan.style.width = style.width;
+                textSpan.style.height = style.height;
+                textSpan.style.fontSize = style.fontSize;
+                textSpan.style.fontFamily = style.fontFamily;
+                textSpan.style.textAlign = style.textAlign || 'center';
+                textSpan.style.color = style.color;
+                textSpan.style.backgroundColor = style.backgroundColor;
+                textSpan.style.border = style.border;
+                textSpan.style.display = 'flex';
+                textSpan.style.alignItems = 'center';
+                textSpan.style.justifyContent = 'center';
+                textSpan.style.zIndex = style.zIndex;
+                textSpan.style.borderRadius = style.borderRadius;
+
+                input.parentNode.insertBefore(textSpan, input);
+                input.style.display = 'none';
+                originalInputs.push({ input, textSpan });
+            }
+        });
+        
+        // Вычисляем габариты
         let maxRight = 100, maxBottom = 100;
         Array.from(workspace.children).forEach(el => {
             if (el.style.display === 'none' || el.classList.contains('selection-box')) return;
@@ -9720,17 +9750,20 @@ async function generateProfessionalPDF() {
             backgroundColor: '#ffffff' 
         });
         
-        // Восстанавливаем рабочую область
+        // Восстанавливаем рабочую область и возвращаем input'ы
         workspace.style.backgroundImage = '';
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
+        originalInputs.forEach(item => {
+            item.input.style.display = ''; // возвращаем input
+            item.textSpan.remove(); // удаляем временный текст
+        });
         workspace.style.transform = savedTransform;
         window.zoomScale = savedZoom;
         
-        // Вставляем картинку с масштабированием
+        // Вставляем картинку
         const imgScheme = canvasScheme.toDataURL('image/png');
         const pdfW = 190;
         const imgH = (canvasScheme.height * pdfW) / canvasScheme.width;
-        // Ограничиваем высоту картинки, чтобы она не вылезла за лист
         doc.addImage(imgScheme, 'PNG', 10, 30, pdfW, imgH > 250 ? 250 : imgH);
 
         // --- СТРАНИЦА 3: СПЕЦИФИКАЦИЯ (АВТОТАБЛИЦА) ---
@@ -9745,78 +9778,67 @@ async function generateProfessionalPDF() {
             }
         });
 
-        // Рисуем таблицу, используя наш новый шрифт Roboto
         doc.autoTable({
             startY: 30,
             head: [['Наименование / Марка', 'Кол-во']],
             body: estimateData,
             theme: 'grid',
             styles: { font: "Roboto", fontSize: 10 },
-            headStyles: { fillColor: [44, 62, 80] } // Темно-синий цвет шапки
+            headStyles: { fillColor: [44, 62, 80] }
         });
 
         // --- СТРАНИЦА 4: КАБЕЛЬНЫЙ ЖУРНАЛ ---
-        // --- СТРАНИЦА 4: КАБЕЛЬНЫЙ ЖУРНАЛ ---
-        const connectionsData = [];
         
-        // Вспомогательная функция для поиска названия аппарата и контакта по ID клеммы
+        // РЕШЕНИЕ ПРОБЛЕМЫ №3: Ищем маркер (input) на модуле
         const getTermInfo = (termId) => {
             const termEl = document.getElementById(termId);
-            if (!termEl) return { name: 'Неизвестный аппарат', tag: '?' };
+            if (!termEl) return { name: 'Неизвестно', tag: '?' };
             
             const moduleId = termEl.dataset.moduleId;
             const tag = termEl.dataset.tag || termEl.dataset.termIndex || '?';
             
-            let name = 'Аппарат';
-            // Находим сам модуль в DOM
+            let name = '';
             const modEl = document.getElementById(moduleId) || document.querySelector(`[data-module-id="${moduleId}"]`);
+            
             if (modEl) {
-                // Пробуем достать название из атрибутов или текста внутри
-                name = modEl.dataset.name || modEl.getAttribute('title') || 'Аппарат';
-                if (name === 'Аппарат') {
-                    // Ищем текстовый элемент заголовка внутри модуля
-                    const textEl = modEl.querySelector('span, .module-title');
-                    if (textEl && textEl.innerText) {
-                        name = textEl.innerText.trim();
+                // Шаг 1: Ищем input с текстом (маркер)
+                const markerInput = modEl.querySelector('input[type="text"]');
+                if (markerInput && markerInput.value.trim() !== '') {
+                    name = markerInput.value.trim(); // Берем значение из маркера (например, "QF1")
+                } else {
+                    // Шаг 2: Если маркера нет или он пустой, берем стандартное имя
+                    name = modEl.dataset.name || modEl.getAttribute('title') || 'Модуль';
+                    if (name === 'Модуль') {
+                        const textEl = modEl.querySelector('span, .module-title');
+                        if (textEl && textEl.innerText) name = textEl.innerText.trim();
                     }
                 }
+            } else {
+                name = 'Аппарат';
             }
             return { name, tag };
         };
 
-        // Собираем данные по проводам
+        const connectionsData = [];
         wiringManagerV2.wires.forEach(w => {
             const fromInfo = getTermInfo(w.from);
             const toInfo = getTermInfo(w.to);
-            
             const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `${w.thickness}мм² (${w.color})`;
             
             connectionsData.push([
-                `${fromInfo.name} [Контакт: ${fromInfo.tag}]`,
+                `${fromInfo.name} [Конт: ${fromInfo.tag}]`,
                 wireInfo,
-                `${toInfo.name} [Контакт: ${toInfo.tag}]`
+                `${toInfo.name} [Конт: ${toInfo.tag}]`
             ]);
         });
 
+        // Таблица создается строго один раз
         if (connectionsData.length > 0) {
             doc.addPage();
             doc.text("3. Таблица соединений", 10, 20);
             doc.autoTable({
                 startY: 30,
-                head: [['Откуда (Аппарат, контакт)', 'Проводник', 'Куда (Аппарат, контакт)']],
-                body: connectionsData,
-                theme: 'grid',
-                styles: { font: "Roboto", fontSize: 9 },
-                headStyles: { fillColor: [44, 62, 80] }
-            });
-        }
-
-        if (connectionsData.length > 0) {
-            doc.addPage();
-            doc.text("3. Таблица соединений", 10, 20);
-            doc.autoTable({
-                startY: 30,
-                head: [['Откуда (Аппарат, контакт)', 'Проводник', 'Куда (Аппарат, контакт)']],
+                head: [['Откуда (Обозначение, контакт)', 'Проводник', 'Куда (Обозначение, контакт)']],
                 body: connectionsData,
                 theme: 'grid',
                 styles: { font: "Roboto", fontSize: 9 },
@@ -9826,15 +9848,12 @@ async function generateProfessionalPDF() {
 
         // Сохраняем файл
         doc.save(`Проект_${projName.replace(/\s+/g, '_')}.pdf`);
-        
-        // Закрываем модальное окно после успешного скачивания
         modal.classList.remove('active');
 
     } catch (err) {
         console.error('Ошибка при создании PDF:', err);
         alert('Произошла ошибка при генерации документа. Подробности в консоли.');
     } finally {
-        // Возвращаем кнопку в исходное состояние
         confirmBtn.innerText = originalBtnText;
         confirmBtn.disabled = false;
     }
