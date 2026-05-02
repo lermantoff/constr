@@ -9583,192 +9583,6 @@ function getModuleDisplayName(moduleEl) {
     return name;
 }
 
-    // ===================== ЭКСПОРТ PDF =====================
-    function getComponentName(terminalId) {
-    if (!terminalId) return 'Неизвестно';
-    // Находим элемент контакта
-    const terminal = typeof terminalId === 'string' ? document.getElementById(terminalId) : terminalId;
-    if (!terminal) return String(terminalId);
-
-    // Ищем родительский блок модуля (у вас может быть класс .module, .device, .component)
-    const component = terminal.closest('.module, .device, .component, .item');
-    if (component) {
-        // Пытаемся взять имя из названия или атрибутов
-        const titleEl = component.querySelector('.title, .name, .module-name');
-        if (titleEl) return titleEl.innerText.trim();
-        if (component.dataset.title) return component.dataset.title;
-        if (component.dataset.name) return component.dataset.name;
-        return component.id; // Если имени нет, возвращаем ID
-    }
-    return String(terminalId);
-}
-
-function getTerminalTag(terminalId) {
-    if (!terminalId) return '-';
-    const terminal = typeof terminalId === 'string' ? document.getElementById(terminalId) : terminalId;
-    if (!terminal) return '-';
-
-    // Пытаемся взять метку контакта (L, N, PE и т.д.)
-    return terminal.dataset.tag || terminal.dataset.label || terminal.title || terminal.innerText || '*';
-}
-    async function savePDF() {
-        // 1. СОХРАНЯЕМ ТЕКУЩЕЕ СОСТОЯНИЕ
-        const savedTransform = workspace.style.transform;
-        const savedScale = typeof window.zoomScale !== 'undefined' ? window.zoomScale : 1;
-        const savedPanX = typeof window.panX !== 'undefined' ? window.panX : 0;
-        const savedPanY = typeof window.panY !== 'undefined' ? window.panY : 0;
-
-        const savedWidth = workspace.style.width;
-        const savedHeight = workspace.style.height;
-        const savedOverflow = workspace.style.overflow;
-
-        // ВАЖНО: Объявляем массив маркеров ДО блока try, чтобы finally его увидел!
-        let markers = [];
-
-        try {
-            // 2. СБРАСЫВАЕМ МАСШТАБ И СДВИГ ДЛЯ СКРИНШОТА
-            window.zoomScale = 1;
-            window.panX = 0;
-            window.panY = 0;
-            workspace.style.transform = `translate(0px, 0px) scale(1)`;
-
-            // 3. ВЫЧИСЛЯЕМ ГАБАРИТНЫЙ КОНТЕЙНЕР
-            let maxRight = workspace.clientWidth;
-            let maxBottom = workspace.clientHeight;
-            const wsRect = workspace.getBoundingClientRect(); 
-
-            Array.from(workspace.children).forEach(el => {
-                if (el.style.display === 'none' || el.id === 'selectionRectangle' || el.classList.contains('selection-box')) return;
-                const rect = el.getBoundingClientRect();
-                const rightEdge = rect.right - wsRect.left;
-                const bottomEdge = rect.bottom - wsRect.top;
-                
-                if (rightEdge > maxRight) maxRight = rightEdge;
-                if (bottomEdge > maxBottom) maxBottom = bottomEdge;
-            });
-
-            const finalWidth = maxRight + 50;
-            const finalHeight = maxBottom + 50;
-            workspace.style.width = finalWidth + 'px';
-            workspace.style.height = finalHeight + 'px';
-            workspace.style.overflow = 'visible'; 
-
-            workspace.style.backgroundImage = 'none';
-            document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
-            
-            // ---- ФИКС МАРКЕРОВ ----
-            workspace.querySelectorAll('input.module-label-input').forEach(input => {
-                const div = document.createElement('div');
-                div.style.cssText = input.style.cssText; 
-                div.style.boxSizing = 'border-box'; 
-                div.innerText = input.value || ''; 
-                div.className = input.className; 
-                
-                input.parentNode.insertBefore(div, input);
-                input.style.display = 'none'; // Прячем инпут
-                markers.push({ input, div }); // Сохраняем в массив
-            });
-            // -----------------------
-            
-            // 4. ДЕЛАЕМ СКРИНШОТ
-            const canvasScheme = await html2canvas(workspace, { 
-                scale: 2, 
-                useCORS: true,
-                allowTaint: false,
-                width: finalWidth,
-                height: finalHeight,
-                backgroundColor: '#f4f4f9' 
-            });
-            
-            // 5. ГЕНЕРАЦИЯ ТАБЛИЦЫ СОЕДИНЕНИЙ V2
-            const schemaTbody = document.querySelector('#schematic-table tbody');
-            schemaTbody.innerHTML = '';
-            if(wiringManagerV2.wires.length === 0) {
-                schemaTbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">Нет соединений</td></tr>';
-            } else {
-                wiringManagerV2.wires.forEach(w => {
-                    const row = document.createElement('tr');
-                    const fromName = getComponentName(w.from);
-                    const toName = getComponentName(w.to);
-                    const fromTag = getTerminalTag(w.from);
-                    const toTag = getTerminalTag(w.to);
-                    const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `Провод ${w.thickness}мм² (${w.color})`;
-                    const layerName = layers.find(l => l.id === w.layerId)?.name || 'Основной';
-                    row.innerHTML = `<td>${fromName} [${fromTag}]</td><td>${wireInfo} [Слой: ${layerName}]</td><td>${toName} [${toTag}]</td>`;
-                    schemaTbody.appendChild(row);
-                });
-            }
-
-            const canvasSchematic = await html2canvas(document.getElementById('schematic-table'), { scale: 2, useCORS: true });
-            const canvasTable = await html2canvas(document.getElementById('estimate-table'), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
-            
-            // 6. СОЗДАЕМ PDF
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF('p', 'mm', 'a4'); 
-            const pdfW = doc.internal.pageSize.getWidth(); 
-            const pdfH = doc.internal.pageSize.getHeight(); 
-            
-            const imgScheme = canvasScheme.toDataURL('image/png');
-            const margin = 10; 
-            const maxImageW = pdfW - margin * 2;
-            const maxImageH = pdfH - margin * 2;
-            
-            let schemeW = maxImageW;
-            let schemeH = (canvasScheme.height * maxImageW) / canvasScheme.width;
-            
-            if (schemeH > maxImageH) {
-                schemeH = maxImageH;
-                schemeW = (canvasScheme.width * maxImageH) / canvasScheme.height;
-            }
-            
-            const offsetX = margin + (maxImageW - schemeW) / 2;
-            const offsetY = margin + (maxImageH - schemeH) / 2;
-            
-            doc.addImage(imgScheme, 'PNG', offsetX, offsetY, schemeW, schemeH);
-            
-            doc.addPage();
-            doc.setFontSize(16);
-            doc.text('Таблица коммутации (Схема цепи)', 14, 20);
-            const imgSch = canvasSchematic.toDataURL('image/png');
-            const schW = Math.min(190, maxImageW); 
-            const schH = (canvasSchematic.height * schW) / canvasSchematic.width;
-            doc.addImage(imgSch, 'PNG', 14, 30, schW, schH);
-            
-            doc.addPage();
-            doc.text('Смета материалов', 14, 20);
-            const imgTable = canvasTable.toDataURL('image/png');
-            const tablePdfW = Math.min(190, maxImageW); 
-            const tablePdfH = (canvasTable.height * tablePdfW) / canvasTable.width;
-            doc.addImage(imgTable, 'PNG', 14, 30, tablePdfW, tablePdfH);
-            
-            doc.save('shield_scheme.pdf');
-
-        } catch (error) {
-            console.error("Ошибка при генерации PDF:", error);
-            alert("Не удалось создать PDF. Проверьте консоль браузера.");
-        } finally {
-            // 7. ВОЗВРАЩАЕМ ИНТЕРФЕЙС В ИСХОДНОЕ СОСТОЯНИЕ
-            
-            // ТЕПЕРЬ МАССИВ ВИДЕН И МЫ УСПЕШНО ВОЗВРАЩАЕМ ИНПУТЫ!
-            markers.forEach(m => {
-                m.input.style.display = ''; // Снова делаем инпут видимым (и редактируемым)
-                if(m.div.parentNode) m.div.remove(); // Удаляем картинку-заглушку
-            });
-
-            workspace.style.width = savedWidth;
-            workspace.style.height = savedHeight;
-            workspace.style.overflow = savedOverflow;
-
-            window.zoomScale = savedScale;
-            window.panX = savedPanX;
-            window.panY = savedPanY;
-            
-            workspace.style.transform = savedTransform;
-            
-            document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
-        }
-    }
-
 // ===================== СЧЁТЧИК FPS =====================
 (function() {
     const fpsElement = document.getElementById('fps-counter');
@@ -9808,144 +9622,182 @@ function getTerminalTag(terminalId) {
 })();
 
 //----------------------доки---------------------------
-async function generateProfessionalPDF() {
-    // 1. Закрываем модальное окно и показываем лоадер (опционально)
-    document.getElementById('pdfProjectModal').classList.remove('active');
-    
-    // Собираем данные из формы
-    const projName = document.getElementById('pdfProjectName').value || 'Проект электрощита';
-    const customer = document.getElementById('pdfCustomer').value || 'Не указан';
-    const designer = document.getElementById('pdfDesigner').value || 'Не указан';
-    const dateStr = new Date().toLocaleDateString('ru-RU');
-
-    const { jsPDF } = window.jspdf;
-    // Создаем документ A4 (210х297 мм)
-    const doc = new jsPDF('p', 'mm', 'a4'); 
-    
-    // --- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ---
-    // Добавляем поддержку русского шрифта (встроенные шрифты jsPDF не поддерживают кириллицу)
-    // Чтобы кириллица работала идеально, нужно добавить шрифт base64, но для начала используем обходной путь
-    // Если кириллица будет "кракозябрами", я дам тебе файл шрифта на следующем шаге.
-    
-    doc.setFont("helvetica"); // Временно, позже подключим ГОСТовский шрифт
-    
-    // Рамка титульного листа
-    doc.setLineWidth(0.5);
-    doc.rect(10, 10, 190, 277);
-    
-    // Тексты титульного листа
-    doc.setFontSize(24);
-    doc.text("ПРОЕКТНАЯ ДОКУМЕНТАЦИЯ", 105, 100, { align: "center" });
-    
-    doc.setFontSize(16);
-    doc.text(`Объект: ${projName}`, 105, 120, { align: "center" });
-    
-    doc.setFontSize(12);
-    doc.text(`Заказчик: ${customer}`, 105, 140, { align: "center" });
-    doc.text(`Проектировщик: ${designer}`, 105, 150, { align: "center" });
-    doc.text(`Дата: ${dateStr}`, 105, 160, { align: "center" });
-
-    // --- СТРАНИЦА 2: ВНЕШНИЙ ВИД ЩИТА (Скриншот) ---
-    doc.addPage();
-    doc.setFontSize(14);
-    doc.text("1. Схема компоновки оборудования", 10, 20);
-    
-    // Подготовка рабочей области (как в старом скрипте)
-    const savedTransform = workspace.style.transform;
-    window.zoomScale = 1; window.panX = 0; window.panY = 0;
-    workspace.style.transform = `translate(0px, 0px) scale(1)`;
-    workspace.style.backgroundImage = 'none';
-    document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
-    
-    // Вычисляем габариты
-    let maxRight = 100, maxBottom = 100;
-    Array.from(workspace.children).forEach(el => {
-        if (el.style.display === 'none' || el.classList.contains('selection-box')) return;
-        const rect = el.getBoundingClientRect();
-        if (rect.right > maxRight) maxRight = rect.right;
-        if (rect.bottom > maxBottom) maxBottom = rect.bottom;
-    });
-    
-    const wsRect = workspace.getBoundingClientRect();
-    const finalWidth = maxRight - wsRect.left + 50;
-    const finalHeight = maxBottom - wsRect.top + 50;
-    
-    // Делаем скриншот
-    const canvasScheme = await html2canvas(workspace, { 
-        scale: 2, 
-        useCORS: true,
-        width: finalWidth,
-        height: finalHeight,
-        backgroundColor: '#ffffff' 
-    });
-    
-    // Восстанавливаем рабочую область
-    workspace.style.backgroundImage = '';
-    document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
-    workspace.style.transform = savedTransform;
-    
-    // Вставляем картинку с масштабированием
-    const imgScheme = canvasScheme.toDataURL('image/png');
-    const pdfW = 190;
-    const imgH = (canvasScheme.height * pdfW) / canvasScheme.width;
-    doc.addImage(imgScheme, 'PNG', 10, 30, pdfW, imgH > 250 ? 250 : imgH);
-
-    // --- СТРАНИЦА 3: СПЕЦИФИКАЦИЯ (АВТОТАБЛИЦА) ---
-    doc.addPage();
-    doc.text("2. Спецификация оборудования", 10, 20);
-    
-    // Собираем данные для таблицы из текущей сметы
-    const estimateData = [];
-    const rows = document.querySelectorAll('#estimate-table tbody tr');
-    rows.forEach(row => {
-        const cols = row.querySelectorAll('td');
-        if (cols.length === 2) {
-            estimateData.push([cols[0].innerText, cols[1].innerText]);
-        }
-    });
-
-    // Рисуем красивую таблицу
-    doc.autoTable({
-        startY: 30,
-        head: [['Наименование / Марка', 'Кол-во']],
-        body: estimateData,
-        theme: 'grid',
-        styles: { font: "helvetica", fontSize: 10 },
-        headStyles: { fillColor: [44, 62, 80] } // Цвет шапки (темно-синий)
-    });
-
-    // --- СТРАНИЦА 4: КАБЕЛЬНЫЙ ЖУРНАЛ ---
-    // (По аналогии со спецификацией)
-    const connectionsData = [];
-    wiringManagerV2.wires.forEach(w => {
-        const fromName = getComponentName(w.from);
-        const toName = getComponentName(w.to);
-        const fromTag = getTerminalTag(w.from);
-        const toTag = getTerminalTag(w.to);
-        const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `${w.thickness}мм² (${w.color})`;
+async function loadCyrillicFont(doc) {
+    try {
+        // Скачиваем шрифт Roboto из надежного CDN
+        const url = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/fonts/Roboto/Roboto-Regular.ttf';
+        const response = await fetch(url);
+        const buffer = await response.arrayBuffer();
         
-        connectionsData.push([
-            `${fromName} [${fromTag}]`,
-            wireInfo,
-            `${toName} [${toTag}]`
-        ]);
-    });
+        // Конвертируем в Base64
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        const base64Font = window.btoa(binary);
+        
+        // Добавляем в PDF
+        doc.addFileToVFS('Roboto-Regular.ttf', base64Font);
+        doc.addFont('Roboto-Regular.ttf', 'Roboto', 'normal');
+        doc.setFont('Roboto');
+        return true;
+    } catch (error) {
+        console.error('Ошибка загрузки шрифта:', error);
+        return false;
+    }
+}
 
-    if (connectionsData.length > 0) {
+async function generateProfessionalPDF() {
+    const modal = document.getElementById('pdfProjectModal');
+    const confirmBtn = modal.querySelector('.confirm');
+    
+    // Блокируем кнопку, чтобы не нажали дважды
+    const originalBtnText = confirmBtn.innerText;
+    confirmBtn.innerText = 'Генерация...';
+    confirmBtn.disabled = true;
+
+    try {
+        // Собираем данные из формы
+        const projName = document.getElementById('pdfProjectName').value || 'Проект электрощита';
+        const customer = document.getElementById('pdfCustomer').value || 'Не указан';
+        const designer = document.getElementById('pdfDesigner').value || 'Не указан';
+        const dateStr = new Date().toLocaleDateString('ru-RU');
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('p', 'mm', 'a4'); 
+        
+        // Загружаем русский шрифт!
+        await loadCyrillicFont(doc);
+        
+        // --- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ---
+        doc.setLineWidth(0.5);
+        doc.rect(10, 10, 190, 277); // Рамка
+        
+        doc.setFontSize(24);
+        doc.text("ПРОЕКТНАЯ ДОКУМЕНТАЦИЯ", 105, 100, { align: "center" });
+        
+        doc.setFontSize(16);
+        doc.text(`Объект: ${projName}`, 105, 120, { align: "center" });
+        
+        doc.setFontSize(12);
+        doc.text(`Заказчик: ${customer}`, 105, 140, { align: "center" });
+        doc.text(`Проектировщик: ${designer}`, 105, 150, { align: "center" });
+        doc.text(`Дата: ${dateStr}`, 105, 160, { align: "center" });
+
+        // --- СТРАНИЦА 2: ВНЕШНИЙ ВИД ЩИТА (Скриншот) ---
         doc.addPage();
-        doc.text("3. Таблица соединений", 10, 20);
+        doc.setFontSize(14);
+        doc.text("1. Схема компоновки оборудования", 10, 20);
+        
+        // Подготовка рабочей области
+        const savedTransform = workspace.style.transform;
+        const savedZoom = window.zoomScale;
+        window.zoomScale = 1; window.panX = 0; window.panY = 0;
+        workspace.style.transform = `translate(0px, 0px) scale(1)`;
+        workspace.style.backgroundImage = 'none';
+        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
+        
+        // Вычисляем габариты схемы
+        let maxRight = 100, maxBottom = 100;
+        Array.from(workspace.children).forEach(el => {
+            if (el.style.display === 'none' || el.classList.contains('selection-box')) return;
+            const rect = el.getBoundingClientRect();
+            if (rect.right > maxRight) maxRight = rect.right;
+            if (rect.bottom > maxBottom) maxBottom = rect.bottom;
+        });
+        
+        const wsRect = workspace.getBoundingClientRect();
+        const finalWidth = maxRight - wsRect.left + 50;
+        const finalHeight = maxBottom - wsRect.top + 50;
+        
+        // Делаем скриншот
+        const canvasScheme = await html2canvas(workspace, { 
+            scale: 2, 
+            useCORS: true,
+            width: finalWidth,
+            height: finalHeight,
+            backgroundColor: '#ffffff' 
+        });
+        
+        // Восстанавливаем рабочую область
+        workspace.style.backgroundImage = '';
+        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
+        workspace.style.transform = savedTransform;
+        window.zoomScale = savedZoom;
+        
+        // Вставляем картинку с масштабированием
+        const imgScheme = canvasScheme.toDataURL('image/png');
+        const pdfW = 190;
+        const imgH = (canvasScheme.height * pdfW) / canvasScheme.width;
+        // Ограничиваем высоту картинки, чтобы она не вылезла за лист
+        doc.addImage(imgScheme, 'PNG', 10, 30, pdfW, imgH > 250 ? 250 : imgH);
+
+        // --- СТРАНИЦА 3: СПЕЦИФИКАЦИЯ (АВТОТАБЛИЦА) ---
+        doc.addPage();
+        doc.text("2. Спецификация оборудования", 10, 20);
+        
+        const estimateData = [];
+        document.querySelectorAll('#estimate-table tbody tr').forEach(row => {
+            const cols = row.querySelectorAll('td');
+            if (cols.length === 2) {
+                estimateData.push([cols[0].innerText, cols[1].innerText]);
+            }
+        });
+
+        // Рисуем таблицу, используя наш новый шрифт Roboto
         doc.autoTable({
             startY: 30,
-            head: [['Откуда (Аппарат, контакт)', 'Проводник', 'Куда (Аппарат, контакт)']],
-            body: connectionsData,
+            head: [['Наименование / Марка', 'Кол-во']],
+            body: estimateData,
             theme: 'grid',
-            styles: { font: "helvetica", fontSize: 9 },
-            headStyles: { fillColor: [44, 62, 80] }
+            styles: { font: "Roboto", fontSize: 10 },
+            headStyles: { fillColor: [44, 62, 80] } // Темно-синий цвет шапки
         });
-    }
 
-    // Сохраняем файл
-    doc.save(`Проект_${projName.replace(/\s+/g, '_')}.pdf`);
+        // --- СТРАНИЦА 4: КАБЕЛЬНЫЙ ЖУРНАЛ ---
+        const connectionsData = [];
+        wiringManagerV2.wires.forEach(w => {
+            const fromName = getComponentName(w.from);
+            const toName = getComponentName(w.to);
+            const fromTag = getTerminalTag(w.from);
+            const toTag = getTerminalTag(w.to);
+            const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `${w.thickness}мм² (${w.color})`;
+            
+            connectionsData.push([
+                `${fromName} [${fromTag}]`,
+                wireInfo,
+                `${toName} [${toTag}]`
+            ]);
+        });
+
+        if (connectionsData.length > 0) {
+            doc.addPage();
+            doc.text("3. Таблица соединений", 10, 20);
+            doc.autoTable({
+                startY: 30,
+                head: [['Откуда (Аппарат, контакт)', 'Проводник', 'Куда (Аппарат, контакт)']],
+                body: connectionsData,
+                theme: 'grid',
+                styles: { font: "Roboto", fontSize: 9 },
+                headStyles: { fillColor: [44, 62, 80] }
+            });
+        }
+
+        // Сохраняем файл
+        doc.save(`Проект_${projName.replace(/\s+/g, '_')}.pdf`);
+        
+        // Закрываем модальное окно после успешного скачивания
+        modal.classList.remove('active');
+
+    } catch (err) {
+        console.error('Ошибка при создании PDF:', err);
+        alert('Произошла ошибка при генерации документа. Подробности в консоли.');
+    } finally {
+        // Возвращаем кнопку в исходное состояние
+        confirmBtn.innerText = originalBtnText;
+        confirmBtn.disabled = false;
+    }
 }
     // ===================== ИНИЦИАЛИЗАЦИЯ =====================
     window.addEventListener('DOMContentLoaded', () => {
