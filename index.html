@@ -9756,20 +9756,60 @@ async function generateProfessionalPDF() {
         });
 
         // --- СТРАНИЦА 4: КАБЕЛЬНЫЙ ЖУРНАЛ ---
+        // --- СТРАНИЦА 4: КАБЕЛЬНЫЙ ЖУРНАЛ ---
         const connectionsData = [];
+        
+        // Вспомогательная функция для поиска названия аппарата и контакта по ID клеммы
+        const getTermInfo = (termId) => {
+            const termEl = document.getElementById(termId);
+            if (!termEl) return { name: 'Неизвестный аппарат', tag: '?' };
+            
+            const moduleId = termEl.dataset.moduleId;
+            const tag = termEl.dataset.tag || termEl.dataset.termIndex || '?';
+            
+            let name = 'Аппарат';
+            // Находим сам модуль в DOM
+            const modEl = document.getElementById(moduleId) || document.querySelector(`[data-module-id="${moduleId}"]`);
+            if (modEl) {
+                // Пробуем достать название из атрибутов или текста внутри
+                name = modEl.dataset.name || modEl.getAttribute('title') || 'Аппарат';
+                if (name === 'Аппарат') {
+                    // Ищем текстовый элемент заголовка внутри модуля
+                    const textEl = modEl.querySelector('span, .module-title');
+                    if (textEl && textEl.innerText) {
+                        name = textEl.innerText.trim();
+                    }
+                }
+            }
+            return { name, tag };
+        };
+
+        // Собираем данные по проводам
         wiringManagerV2.wires.forEach(w => {
-            const fromName = getComponentName(w.from);
-            const toName = getComponentName(w.to);
-            const fromTag = getTerminalTag(w.from);
-            const toTag = getTerminalTag(w.to);
+            const fromInfo = getTermInfo(w.from);
+            const toInfo = getTermInfo(w.to);
+            
             const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `${w.thickness}мм² (${w.color})`;
             
             connectionsData.push([
-                `${fromName} [${fromTag}]`,
+                `${fromInfo.name} [Контакт: ${fromInfo.tag}]`,
                 wireInfo,
-                `${toName} [${toTag}]`
+                `${toInfo.name} [Контакт: ${toInfo.tag}]`
             ]);
         });
+
+        if (connectionsData.length > 0) {
+            doc.addPage();
+            doc.text("3. Таблица соединений", 10, 20);
+            doc.autoTable({
+                startY: 30,
+                head: [['Откуда (Аппарат, контакт)', 'Проводник', 'Куда (Аппарат, контакт)']],
+                body: connectionsData,
+                theme: 'grid',
+                styles: { font: "Roboto", fontSize: 9 },
+                headStyles: { fillColor: [44, 62, 80] }
+            });
+        }
 
         if (connectionsData.length > 0) {
             doc.addPage();
