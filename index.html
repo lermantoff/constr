@@ -6,6 +6,7 @@
     <title>Конструктор Щита v4.10.1</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
     <style>
         /* Рамка выделения */
@@ -895,8 +896,8 @@
         
         .terminal-v2 {
             position: absolute;
-            width: 9px;
-            height: 9px;
+            width: 15px;
+            height: 15px;
             border-radius: 50%;
             background: #555;
             border: 1px solid #333;
@@ -1035,6 +1036,31 @@
 
 
 <!-- Модальное окно для редактирования свойств провода -->
+ <div class="modal-overlay" id="pdfProjectModal">
+    <div class="modal-content" style="width: 400px;">
+        <h3 style="margin-top:0; color:#333; border-bottom: 1px solid #eee; padding-bottom: 10px;">Экспорт документации</h3>
+        
+        <div class="form-group">
+            <label>Название проекта (Объект):</label>
+            <input type="text" id="pdfProjectName" placeholder="Например: Квартира, ул. Ленина 10" value="Электрический щит">
+        </div>
+        
+        <div class="form-group">
+            <label>Заказчик:</label>
+            <input type="text" id="pdfCustomer" placeholder="Иванов И.И.">
+        </div>
+        
+        <div class="form-group">
+            <label>Проектировщик (Монтажник):</label>
+            <input type="text" id="pdfDesigner" placeholder="Ваше ФИО">
+        </div>
+
+        <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button class="modal-btn cancel" onclick="document.getElementById('pdfProjectModal').classList.remove('active')">Отмена</button>
+            <button class="modal-btn confirm" onclick="generateProfessionalPDF()" style="background: #e74c3c;">Сгенерировать PDF</button>
+        </div>
+    </div>
+</div>
 <div class="modal-overlay" id="wirePropsModal">
     <div class="modal-content wire-props-modal">
         <h3 style="margin-top:0; color:#333; border:none;">Свойства провода</h3>
@@ -1207,7 +1233,7 @@
                 </div>
             </div>
 
-            <button class="sidebar-btn full-width" style="margin-top:15px; background:#e74c3c; font-weight:bold;" onclick="savePDF()">Экспорт PDF</button>
+            <button class="sidebar-btn full-width" style="margin-top:15px; background:#e74c3c; font-weight:bold;" onclick="document.getElementById('pdfProjectModal').classList.add('active')">Документация (PDF)</button>
         </div>
 
         <div id="data-wrapper">
@@ -6311,7 +6337,7 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
 
     // Если направляющие не используются или ещё не адаптированы – используем упрощённый вариант
     if (!guides) {
-        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply);
+        return this.CalculateBreakpointsNoR(x1, y1, x2, y2, isFromSupply);
     }
 
     // Дальше идёт сложная логика с направляющими, но теперь x1,y1,x2,y2 – логические координаты.
@@ -6342,14 +6368,14 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
             ];
             return { type: 'module', points };
         }
-        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
+        return this.CalculateBreakpointsNoR(x1, y1, x2, y2, false);
     }
 
     const startGuideH = guides.getClosestHorizontalGuide(y1, x1 - 50, x1 + 50);
     const endGuideH = guides.getClosestHorizontalGuide(y2, x2 - 50, x2 + 50);
     
     if (!startGuideH || !endGuideH) {
-        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
+        return this.CalculateBreakpointsNoR(x1, y1, x2, y2, false);
     }
 
     const minY = Math.min(startGuideH.y, endGuideH.y);
@@ -6357,7 +6383,7 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
     const verticalGuides = guides.getVerticalGuidesInRange(minY, maxY);
 
     if (verticalGuides.length === 0) {
-        return this._legacyCalculateBreakpoints(x1, y1, x2, y2, false);
+        return this.CalculateBreakpointsNoR(x1, y1, x2, y2, false);
     }
 
     let chosenVGuide;
@@ -6393,8 +6419,8 @@ calculateBreakpoints(fromEl, toEl, wire = null) {
     return { type: 'module', points };
 }
 
-// Вспомогательный legacy-метод (старая логика)
-_legacyCalculateBreakpoints(x1, y1, x2, y2, isFromSupply) {
+// отрисовка провода вне рейки
+CalculateBreakpointsNoR(x1, y1, x2, y2, isFromSupply) {
     if (isFromSupply) {
         return {
             type: 'supply',
@@ -9780,6 +9806,147 @@ function getTerminalTag(terminalId) {
 
     requestAnimationFrame(updateFPS);
 })();
+
+//----------------------доки---------------------------
+async function generateProfessionalPDF() {
+    // 1. Закрываем модальное окно и показываем лоадер (опционально)
+    document.getElementById('pdfProjectModal').classList.remove('active');
+    
+    // Собираем данные из формы
+    const projName = document.getElementById('pdfProjectName').value || 'Проект электрощита';
+    const customer = document.getElementById('pdfCustomer').value || 'Не указан';
+    const designer = document.getElementById('pdfDesigner').value || 'Не указан';
+    const dateStr = new Date().toLocaleDateString('ru-RU');
+
+    const { jsPDF } = window.jspdf;
+    // Создаем документ A4 (210х297 мм)
+    const doc = new jsPDF('p', 'mm', 'a4'); 
+    
+    // --- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ---
+    // Добавляем поддержку русского шрифта (встроенные шрифты jsPDF не поддерживают кириллицу)
+    // Чтобы кириллица работала идеально, нужно добавить шрифт base64, но для начала используем обходной путь
+    // Если кириллица будет "кракозябрами", я дам тебе файл шрифта на следующем шаге.
+    
+    doc.setFont("helvetica"); // Временно, позже подключим ГОСТовский шрифт
+    
+    // Рамка титульного листа
+    doc.setLineWidth(0.5);
+    doc.rect(10, 10, 190, 277);
+    
+    // Тексты титульного листа
+    doc.setFontSize(24);
+    doc.text("ПРОЕКТНАЯ ДОКУМЕНТАЦИЯ", 105, 100, { align: "center" });
+    
+    doc.setFontSize(16);
+    doc.text(`Объект: ${projName}`, 105, 120, { align: "center" });
+    
+    doc.setFontSize(12);
+    doc.text(`Заказчик: ${customer}`, 105, 140, { align: "center" });
+    doc.text(`Проектировщик: ${designer}`, 105, 150, { align: "center" });
+    doc.text(`Дата: ${dateStr}`, 105, 160, { align: "center" });
+
+    // --- СТРАНИЦА 2: ВНЕШНИЙ ВИД ЩИТА (Скриншот) ---
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.text("1. Схема компоновки оборудования", 10, 20);
+    
+    // Подготовка рабочей области (как в старом скрипте)
+    const savedTransform = workspace.style.transform;
+    window.zoomScale = 1; window.panX = 0; window.panY = 0;
+    workspace.style.transform = `translate(0px, 0px) scale(1)`;
+    workspace.style.backgroundImage = 'none';
+    document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
+    
+    // Вычисляем габариты
+    let maxRight = 100, maxBottom = 100;
+    Array.from(workspace.children).forEach(el => {
+        if (el.style.display === 'none' || el.classList.contains('selection-box')) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.right > maxRight) maxRight = rect.right;
+        if (rect.bottom > maxBottom) maxBottom = rect.bottom;
+    });
+    
+    const wsRect = workspace.getBoundingClientRect();
+    const finalWidth = maxRight - wsRect.left + 50;
+    const finalHeight = maxBottom - wsRect.top + 50;
+    
+    // Делаем скриншот
+    const canvasScheme = await html2canvas(workspace, { 
+        scale: 2, 
+        useCORS: true,
+        width: finalWidth,
+        height: finalHeight,
+        backgroundColor: '#ffffff' 
+    });
+    
+    // Восстанавливаем рабочую область
+    workspace.style.backgroundImage = '';
+    document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
+    workspace.style.transform = savedTransform;
+    
+    // Вставляем картинку с масштабированием
+    const imgScheme = canvasScheme.toDataURL('image/png');
+    const pdfW = 190;
+    const imgH = (canvasScheme.height * pdfW) / canvasScheme.width;
+    doc.addImage(imgScheme, 'PNG', 10, 30, pdfW, imgH > 250 ? 250 : imgH);
+
+    // --- СТРАНИЦА 3: СПЕЦИФИКАЦИЯ (АВТОТАБЛИЦА) ---
+    doc.addPage();
+    doc.text("2. Спецификация оборудования", 10, 20);
+    
+    // Собираем данные для таблицы из текущей сметы
+    const estimateData = [];
+    const rows = document.querySelectorAll('#estimate-table tbody tr');
+    rows.forEach(row => {
+        const cols = row.querySelectorAll('td');
+        if (cols.length === 2) {
+            estimateData.push([cols[0].innerText, cols[1].innerText]);
+        }
+    });
+
+    // Рисуем красивую таблицу
+    doc.autoTable({
+        startY: 30,
+        head: [['Наименование / Марка', 'Кол-во']],
+        body: estimateData,
+        theme: 'grid',
+        styles: { font: "helvetica", fontSize: 10 },
+        headStyles: { fillColor: [44, 62, 80] } // Цвет шапки (темно-синий)
+    });
+
+    // --- СТРАНИЦА 4: КАБЕЛЬНЫЙ ЖУРНАЛ ---
+    // (По аналогии со спецификацией)
+    const connectionsData = [];
+    wiringManagerV2.wires.forEach(w => {
+        const fromName = getComponentName(w.from);
+        const toName = getComponentName(w.to);
+        const fromTag = getTerminalTag(w.from);
+        const toTag = getTerminalTag(w.to);
+        const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `${w.thickness}мм² (${w.color})`;
+        
+        connectionsData.push([
+            `${fromName} [${fromTag}]`,
+            wireInfo,
+            `${toName} [${toTag}]`
+        ]);
+    });
+
+    if (connectionsData.length > 0) {
+        doc.addPage();
+        doc.text("3. Таблица соединений", 10, 20);
+        doc.autoTable({
+            startY: 30,
+            head: [['Откуда (Аппарат, контакт)', 'Проводник', 'Куда (Аппарат, контакт)']],
+            body: connectionsData,
+            theme: 'grid',
+            styles: { font: "helvetica", fontSize: 9 },
+            headStyles: { fillColor: [44, 62, 80] }
+        });
+    }
+
+    // Сохраняем файл
+    doc.save(`Проект_${projName.replace(/\s+/g, '_')}.pdf`);
+}
     // ===================== ИНИЦИАЛИЗАЦИЯ =====================
     window.addEventListener('DOMContentLoaded', () => {
     initLayers();
