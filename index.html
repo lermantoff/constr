@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.12.4</title>
+    <title>Конструктор Щита v4.12.3</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -56,7 +56,6 @@
     height: 100%;
     margin: 0;
     padding: 0;
-    /* ФОН ОТСЮДА УДАЛЕН */
 }
         
         #wires-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; min-height: 100%; overflow: visible !important; }
@@ -1026,6 +1025,86 @@
     </div>
 </div>
 
+<!-- Модальное окно сохранения проекта -->
+<div class="modal-overlay" id="saveProjectModal">
+    <div class="modal-content" style="width: 380px;">
+        <h3 style="margin-top:0; color:#333; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+            Сохранить проект
+        </h3>
+        
+        <div class="form-group">
+            <label>Название проекта:</label>
+            <input type="text" id="saveProjectName" placeholder="Например: Щит квартиры" value="Без названия">
+        </div>
+        
+        <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 15px;">
+            <input type="checkbox" id="saveIncludeFavorites" style="width: auto; margin: 0;">
+            <label for="saveIncludeFavorites" style="margin: 0; font-weight: normal; cursor: pointer;">
+                Включить «Избранное» в файл
+            </label>
+        </div>
+        
+        <div style="font-size: 0.75rem; color: #7f8c8d; margin-top: 4px; padding-left: 24px;">
+            При открытии файла избранное из проекта будет добавлено к текущему.
+        </div>
+
+        <div class="modal-actions">
+            <button class="modal-btn cancel" onclick="document.getElementById('saveProjectModal').classList.remove('active')">
+                Отмена
+            </button>
+            <button class="modal-btn confirm" onclick="ProjectIO.saveFromDialog()">
+                Скачать файл
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка выбора стратегии импорта избранного -->
+<div class="modal-overlay" id="importFavoritesModal">
+    <div class="modal-content" style="width: 420px;">
+        <h3 style="margin-top:0; color:#333; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+            Избранное из файла
+        </h3>
+        
+        <div style="font-size: 0.9rem; color: #555; margin-bottom: 15px;">
+            В загружаемом файле найдено <b id="importFavoritesCount">0</b> элементов в избранном.
+            Что с ними сделать?
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px;">
+            <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                <input type="radio" name="favImportStrategy" value="skip" checked style="margin-top: 3px;">
+                <div>
+                    <div style="font-weight: bold;">Не переносить</div>
+                    <div style="font-size: 0.8rem; color: #777;">Текущее избранное не изменится.</div>
+                </div>
+            </label>
+            
+            <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                <input type="radio" name="favImportStrategy" value="merge" style="margin-top: 3px;">
+                <div>
+                    <div style="font-weight: bold;">Дополнить</div>
+                    <div style="font-size: 0.8rem; color: #777;">Добавить элементы из файла к текущему избранному. Дубликаты будут пропущены.</div>
+                </div>
+            </label>
+            
+            <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                <input type="radio" name="favImportStrategy" value="replace" style="margin-top: 3px;">
+                <div>
+                    <div style="font-weight: bold;">Заменить</div>
+                    <div style="font-size: 0.8rem; color: #777;">Текущее избранное будет полностью удалено и заменено избранным из файла.</div>
+                </div>
+            </label>
+        </div>
+
+        <div class="modal-actions">
+            <button class="modal-btn confirm" onclick="ProjectIO._applyFavoritesStrategy()">
+                Применить
+            </button>
+        </div>
+    </div>
+</div>
+
 
 <div class="container">
     <div id="viewport">
@@ -1144,7 +1223,15 @@
 </div>
                 </div>
             </div>
+            <button class="sidebar-btn full-width" style="margin-top:15px; background:#16a085; font-weight:bold;" onclick="ProjectIO.openSaveDialog()">
+    💾 Сохранить проект
+</button>
+<button class="sidebar-btn full-width" style="margin-top:8px; background:#2980b9; font-weight:bold;" onclick="ProjectIO.openLoadDialog()">
+    📂 Открыть проект
+</button>
 
+<!-- Скрытый input для выбора файла -->
+<input type="file" id="loadProjectFileInput" accept=".json,application/json" style="display:none;">
             <button class="sidebar-btn full-width" style="margin-top:15px; background:#e74c3c; font-weight:bold;" onclick="document.getElementById('pdfProjectModal').classList.add('active')">Документация (PDF)</button>
         </div>
 
@@ -8175,6 +8262,81 @@ TYPE_NAMES: {
         this.save();
         this.render();
     },
+
+    /**
+     * Полностью заменить избранное переданным списком.
+     * @param {Array} items - массив элементов избранного из файла проекта
+     * @returns {number} количество элементов после замены
+     */
+    replaceAll(items) {
+        if (!Array.isArray(items)) {
+            console.warn('FavoritesUI.replaceAll: ожидался массив');
+            return 0;
+        }
+        
+        // Валидируем и нормализуем элементы
+        this.items = items
+            .filter(it => it && typeof it === 'object'
+                       && typeof it.brand === 'string'
+                       && typeof it.series === 'string'
+                       && typeof it.type === 'string')
+            .map(it => ({
+                brand:  it.brand,
+                series: it.series,
+                type:   it.type,
+                name:   it.name || it.type,
+                params: { ...(it.params || {}) },
+            }));
+        
+        this.save();
+        this.render();
+        return this.items.length;
+    },
+    
+    /**
+     * Дополнить избранное элементами из файла. Дубликаты молча пропускаются.
+     * Дубликат определяется по brand + series + type + JSON.stringify(params).
+     * @param {Array} items - массив элементов избранного из файла проекта
+     * @returns {number} количество фактически добавленных элементов
+     */
+    mergeWith(items) {
+        if (!Array.isArray(items)) {
+            console.warn('FavoritesUI.mergeWith: ожидался массив');
+            return 0;
+        }
+        
+        // Делаем сет ключей для O(1) проверки дубликатов
+        const makeKey = (it) =>
+            `${it.brand}|${it.series}|${it.type}|${JSON.stringify(it.params || {})}`;
+        const existingKeys = new Set(this.items.map(makeKey));
+        
+        let added = 0;
+        items.forEach(it => {
+            if (!it || typeof it !== 'object') return;
+            if (typeof it.brand !== 'string' || typeof it.series !== 'string' || typeof it.type !== 'string') return;
+            
+            const cleanItem = {
+                brand:  it.brand,
+                series: it.series,
+                type:   it.type,
+                name:   it.name || it.type,
+                params: { ...(it.params || {}) },
+            };
+            
+            const key = makeKey(cleanItem);
+            if (existingKeys.has(key)) return;  // дубликат, пропускаем
+            
+            this.items.push(cleanItem);
+            existingKeys.add(key);
+            added++;
+        });
+        
+        if (added > 0) {
+            this.save();
+            this.render();
+        }
+        return added;
+    },
     
     sortByBrand() {
         this.items.sort((a, b) => {
@@ -9348,6 +9510,7 @@ const App = {
             this._initUI();
             this._initSelectors();
             this._initGlobalHandlers();
+            this._initProjectIO(); 
             this._initialRefresh();
         } catch (err) {
             console.error('App.init() failed:', err);
@@ -9407,6 +9570,15 @@ const App = {
         // Сейчас на схеме нет модулей, но если в будущем будет автозагрузка проекта — пригодится.
         this.tagManager.updateAllTags();
     },
+     _initProjectIO() {
+        const fileInput = document.getElementById('loadProjectFileInput');
+        if (!fileInput) {
+            console.error('App._initProjectIO: #loadProjectFileInput не найден');
+            return;
+        }
+        // Стрелка сохраняет контекст ProjectIO
+        fileInput.addEventListener('change', (e) => ProjectIO._onFileSelected(e));
+    },
 };
 
 // Запускаем приложение, когда DOM готов
@@ -9415,6 +9587,1061 @@ if (document.readyState === 'loading') {
 } else {
     App.init();
 }
+//---------------------------СОХРАНЕНИЕ И ЗАГРУЗКА---------------------------------
+/**
+ * ProjectValidator — проверяет корректность данных загруженного проекта.
+ * 
+ * Возвращает результат валидации:
+ *   { ok: true,  data, warnings: [] }    — всё хорошо (warnings — некритичные замечания)
+ *   { ok: false, error: 'описание' }     — критическая ошибка, проект загружать нельзя
+ * 
+ * Принцип: на этапе валидации мы НЕ модифицируем сцену.
+ * Только проверяем и собираем информацию.
+ */
+const ProjectValidator = {
+    
+    /** Версии формата, которые мы умеем загружать. */
+    SUPPORTED_VERSIONS: ['1.0.0'],
+    
+    /**
+     * Главный метод валидации.
+     * @param {*} raw - то, что получилось после JSON.parse
+     * @returns {{ok: boolean, data?: Object, warnings?: string[], error?: string}}
+     */
+    validate(raw) {
+        // 1. Базовая проверка: это вообще объект?
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return { ok: false, error: 'Файл не содержит объект проекта (ожидался JSON-объект).' };
+        }
+        
+        // 2. Проверка формата
+        const formatCheck = this._checkFormat(raw);
+        if (!formatCheck.ok) return formatCheck;
+        
+        // 3. Проверка обязательных секций
+        const structureCheck = this._checkStructure(raw);
+        if (!structureCheck.ok) return structureCheck;
+        
+        // 4. Сбор warnings (некритичные замечания)
+        const warnings = this._collectWarnings(raw);
+        
+        return { ok: true, data: raw, warnings };
+    },
+    
+    /**
+     * @private
+     * Проверяет formatVersion: есть ли он, поддерживается ли.
+     */
+    _checkFormat(raw) {
+        const meta = raw.meta;
+        if (!meta || typeof meta !== 'object') {
+            return { ok: false, error: 'В файле отсутствует секция "meta".' };
+        }
+        
+        const version = meta.formatVersion;
+        if (!version) {
+            return { ok: false, error: 'В файле не указана версия формата (meta.formatVersion).' };
+        }
+        
+        if (!this.SUPPORTED_VERSIONS.includes(version)) {
+            return {
+                ok: false,
+                error: `Неподдерживаемая версия формата: ${version}.\n` +
+                       `Поддерживаются: ${this.SUPPORTED_VERSIONS.join(', ')}.`,
+            };
+        }
+        
+        return { ok: true };
+    },
+    
+    /**
+     * @private
+     * Проверяет наличие обязательных секций верхнего уровня.
+     */
+    _checkStructure(raw) {
+        const required = ['meta', 'view', 'layers', 'rails', 'modules', 'wires'];
+        for (const key of required) {
+            if (!(key in raw)) {
+                return { ok: false, error: `В файле отсутствует обязательная секция "${key}".` };
+            }
+        }
+        
+        // Проверяем типы
+        if (!Array.isArray(raw.layers))  return { ok: false, error: '"layers" должно быть массивом.' };
+        if (!Array.isArray(raw.rails))   return { ok: false, error: '"rails" должно быть массивом.' };
+        if (!Array.isArray(raw.modules)) return { ok: false, error: '"modules" должно быть массивом.' };
+        if (!Array.isArray(raw.wires))   return { ok: false, error: '"wires" должно быть массивом.' };
+        
+        if (typeof raw.view !== 'object' || raw.view === null) {
+            return { ok: false, error: '"view" должно быть объектом.' };
+        }
+if ('favorites' in raw && !Array.isArray(raw.favorites)) {
+            return { ok: false, error: '"favorites" должно быть массивом (если присутствует).' };
+        }
+        
+        return { ok: true };
+    },
+    
+    /**
+     * @private
+     * Собирает некритичные замечания. На загрузку не влияет.
+     */
+    _collectWarnings(raw) {
+        const warnings = [];
+        
+        // Проект пустой?
+        if (raw.rails.length === 0 && raw.modules.length === 0) {
+            warnings.push('Проект не содержит реек и модулей.');
+        }
+        
+        // Провода без модулей?
+        if (raw.wires.length > 0 && raw.modules.length === 0) {
+            warnings.push('В файле есть провода, но нет модулей — провода не смогут подключиться.');
+        }
+        
+        // Активный слой указан, но в списке слоёв такого нет?
+        if (raw.activeLayerId && raw.layers.length > 0) {
+            const exists = raw.layers.some(l => l.id === raw.activeLayerId);
+            if (!exists) {
+                warnings.push(`Активный слой "${raw.activeLayerId}" не найден в списке слоёв.`);
+            }
+        }
+        
+        return warnings;
+    },
+};
+/**
+ * ProjectIO — модуль ввода/вывода проектов.
+ * Связывает UI (модалки, кнопки) с ProjectSerializer и файловой системой.
+ * 
+ * Сейчас умеет: открыть диалог сохранения, сохранить проект в JSON-файл.
+ * Позже здесь же будут: openLoadDialog, loadFromFile, restoreProject и т.п.
+ */
+const ProjectIO = {
+    _pendingFavorites: null,
+    
+    /**
+     * Открывает модальное окно сохранения.
+     * Подставляет осмысленное имя по умолчанию (на основе текущей даты).
+     */
+    openSaveDialog() {
+        const modal = document.getElementById('saveProjectModal');
+        const nameInput = document.getElementById('saveProjectName');
+        const favCheckbox = document.getElementById('saveIncludeFavorites');
+        
+        // Подставляем имя по умолчанию: «Щит_2025-01-15»
+        const today = new Date();
+        const dateStr = today.toISOString().slice(0, 10);  // YYYY-MM-DD
+        nameInput.value = `Щит_${dateStr}`;
+        
+        // Чекбокс по умолчанию снят (большинство проектов без избранного)
+        favCheckbox.checked = false;
+        
+        modal.classList.add('active');
+        
+        // Автофокус на поле имени, выделяем содержимое для быстрого ввода
+        setTimeout(() => {
+            nameInput.focus();
+            nameInput.select();
+        }, 50);
+    },
+    
+    /**
+     * Вызывается из кнопки «Скачать файл» в модалке.
+     * Извлекает данные через ProjectSerializer и инициирует скачивание.
+     */
+    saveFromDialog() {
+        const nameInput = document.getElementById('saveProjectName');
+        const favCheckbox = document.getElementById('saveIncludeFavorites');
+        const modal = document.getElementById('saveProjectModal');
+        
+        const projectName = (nameInput.value || 'Без названия').trim();
+        const includeFavorites = favCheckbox.checked;
+        
+        try {
+            const projectData = ProjectSerializer.extract({
+                projectName,
+                includeFavorites,
+            });
+            
+            // Имя файла = безопасное имя проекта
+            const filename = this._sanitizeFilename(projectName);
+            downloadJSON(projectData, filename);
+            
+            // Закрываем модалку только при успехе
+            modal.classList.remove('active');
+        } catch (err) {
+            console.error('ProjectIO.saveFromDialog: ошибка извлечения проекта', err);
+            alert('Не удалось сохранить проект:\n' + err.message);
+            // Модалку не закрываем — пользователь увидит ошибку и сможет попробовать ещё раз
+        }
+    },
+    /**
+     * Открывает системный диалог выбора файла.
+     * Реакция на выбор файла — в обработчике инициализации (см. ниже).
+     */
+    openLoadDialog() {
+        const input = document.getElementById('loadProjectFileInput');
+        if (!input) {
+            console.error('ProjectIO: loadProjectFileInput не найден в DOM');
+            return;
+        }
+        // Сбрасываем value, чтобы повторный выбор того же файла тоже срабатывал.
+        // Без этого change-событие не возникнет, если файл такой же, как был.
+        input.value = '';
+        input.click();
+    },
+    /**
+     * Если в загруженном проекте есть непустое избранное — показывает
+     * пользователю модалку выбора стратегии импорта.
+     */
+    _maybeOfferFavoritesImport(projectData) {
+        console.log('_maybeOfferFavoritesImport:', projectData.favorites);
+        const favs = projectData.favorites;
+        if (!Array.isArray(favs) || favs.length === 0) return;
+        
+        this._pendingFavorites = favs;
+        
+        const modal = document.getElementById('importFavoritesModal');
+        const counter = document.getElementById('importFavoritesCount');
+        if (!modal || !counter) {
+            console.warn('ProjectIO: модалка importFavoritesModal не найдена в DOM');
+            this._pendingFavorites = null;
+            return;
+        }
+        
+        // Сбрасываем выбор на "skip" (по умолчанию)
+        const skipRadio = modal.querySelector('input[name="favImportStrategy"][value="skip"]');
+        if (skipRadio) skipRadio.checked = true;
+        
+        counter.textContent = favs.length;
+        modal.classList.add('active');
+    },
+    
+    /**
+     * Вызывается из модалки кнопкой «Применить».
+     * Применяет выбранную стратегию к избранному.
+     */
+    _applyFavoritesStrategy() {
+        const modal = document.getElementById('importFavoritesModal');
+        const checked = modal?.querySelector('input[name="favImportStrategy"]:checked');
+        const strategy = checked ? checked.value : 'skip';
+        
+        const favs = this._pendingFavorites || [];
+        this._pendingFavorites = null;
+        modal?.classList.remove('active');
+        
+        if (strategy === 'skip' || favs.length === 0) {
+            return;  // ничего не делаем
+        }
+        
+        try {
+            if (strategy === 'replace') {
+                const total = FavoritesUI.replaceAll(favs);
+                alert(`Избранное заменено. Элементов: ${total}.`);
+            } else if (strategy === 'merge') {
+                const added = FavoritesUI.mergeWith(favs);
+                alert(`Добавлено в избранное: ${added}.`);
+            }
+        } catch (err) {
+            console.error('ProjectIO._applyFavoritesStrategy:', err);
+            alert('Не удалось применить избранное:\n' + err.message);
+        }
+    },
+    
+    /**
+     * Обработчик выбора файла. Читает, парсит, валидирует.
+     * При успехе — передаёт данные в _confirmAndLoad (диалог подтверждения).
+     */
+    _onFileSelected(event) {
+        const file = event.target.files[0];
+        if (!file) return;  // пользователь отменил
+        
+        const reader = new FileReader();
+        
+        reader.onload = (e) => {
+            const text = e.target.result;
+            this._parseAndValidate(text, file.name);
+        };
+        
+        reader.onerror = () => {
+            alert(`Не удалось прочитать файл "${file.name}".\n` +
+                  `Возможно, он повреждён или защищён от чтения.`);
+        };
+        
+        reader.readAsText(file, 'utf-8');
+    },
+    
+    /**
+     * Парсит JSON и запускает валидацию.
+     * Все ошибки парсинга/валидации показываются пользователю здесь.
+     */
+    _parseAndValidate(text, filename) {
+        // 1. Парсинг JSON
+        let raw;
+        try {
+            raw = JSON.parse(text);
+        } catch (err) {
+            alert(`Файл "${filename}" не является корректным JSON.\n\nОшибка: ${err.message}`);
+            return;
+        }
+        
+        // 2. Валидация структуры
+        const result = ProjectValidator.validate(raw);
+        if (!result.ok) {
+            alert(`Файл "${filename}" не может быть загружен.\n\n${result.error}`);
+            return;
+        }
+        
+        // 3. Логируем замечания (некритичные)
+        if (result.warnings && result.warnings.length > 0) {
+            console.warn(`ProjectIO: замечания при загрузке "${filename}":`, result.warnings);
+        }
+        
+        // 4. Подтверждение, очистка сцены, применение проекта
+        this._confirmAndLoad(result.data, filename);
+    },
+    
+    /**
+     * Очищает имя файла от недопустимых символов файловой системы.
+     * Не трогает кириллицу — современные ОС её корректно обрабатывают.
+     */
+    _sanitizeFilename(name) {
+        return name
+            .replace(/[\\/:*?"<>|]/g, '_')   // запрещённые символы Windows/Linux
+            .replace(/\s+/g, ' ')             // схлопываем пробелы
+            .trim()
+            .slice(0, 100)                    // ограничение длины
+            || 'project';                     // если всё убрали — fallback
+    },
+    /**
+     * Проверяет, пустая ли сцена. Используется чтобы не показывать
+     * диалог подтверждения, когда терять нечего.
+     */
+    _isSceneEmpty() {
+        const hasRails   = document.querySelector('.din-rail-v2') !== null;
+        const hasModules = document.querySelector('.module-v2')   !== null;
+        const hasWires   = window.wiringManagerV2?.wires.length > 0;
+        return !hasRails && !hasModules && !hasWires;
+    },
+    /**
+     * Полностью очищает сцену:
+     *   - удаляет все модули (DOM + регистрации в moduleManagerV2)
+     *   - удаляет все рейки (DOM + регистрации в dinRailManagerV2)
+     *   - удаляет все провода (массив + DOM-пути + пивоты)
+     *   - сбрасывает слои до состояния "только default"
+     *   - снимает выделения, прерывает активные операции
+     * 
+     * Не трогает: настройки инструментов (цвет/толщина/режим), zoom/pan, избранное.
+     * Их при загрузке проекта применит _applyProject.
+     */
+    _clearScene() {
+        // 1. Прерываем активные операции (если пользователь в момент загрузки
+        //    что-то перетаскивал или вёл провод — это вызовет глюки).
+        if (window.wiringManagerV2?.wiringStartTerminal) {
+            wiringManagerV2.cancelWiring();
+            wiringManagerV2.finishWiring();
+        }
+        SelectionManager.clearAll();
+        ModuleContextMenu?.hide();
+        WireContextMenu?.hide();
+        
+        // 2. Удаляем все провода. Используем deleteWire — он корректно
+        //    чистит DOM-пути, пивоты и сбрасывает цвета клемм.
+        if (window.wiringManagerV2) {
+            // Копируем массив, т.к. deleteWire его модифицирует во время итерации.
+            const wireIds = wiringManagerV2.wires.map(w => w.id);
+            wireIds.forEach(id => wiringManagerV2.deleteWire(id));
+            wiringManagerV2.selectedWireId = null;
+        }
+        
+        // 3. Удаляем все модули. Снимаем регистрации в менеджере.
+        document.querySelectorAll('.module-v2').forEach(moduleEl => {
+            const moduleId = moduleEl.dataset.moduleId;
+            // Снимаем регистрацию клемм
+            moduleEl.querySelectorAll('.terminal-v2').forEach(term => {
+                moduleManagerV2.terminals.delete(term.id);
+            });
+            moduleManagerV2.modules.delete(moduleId);
+            moduleManagerV2.configs.delete(moduleId);
+            moduleEl.remove();
+        });
+        
+        // 4. Удаляем все рейки. Снимаем регистрации.
+        document.querySelectorAll('.din-rail-v2').forEach(railEl => {
+            dinRailManagerV2.rails.delete(railEl.id);
+            railEl.remove();
+        });
+        // Перестраиваем направляющие (теперь их нет — список пустой)
+        dinRailManagerV2.guideLineManager.updateFromRails();
+        
+         // 5. Сбрасываем слои до базового состояния.
+        LayersUI.items = [
+            { id: 'default', name: 'Основной слой', color: '#3498db', visible: true }
+        ];
+        LayersUI.activeId = 'default';
+        LayersUI.render();
+        
+        // Сбрасываем счётчики ID, чтобы при загрузке нового проекта
+        // не было конфликтов с предыдущим состоянием
+        if (window.moduleManagerV2)  moduleManagerV2.nextId  = 0;
+        if (window.dinRailManagerV2) dinRailManagerV2.nextId = 0;
+        if (window.wiringManagerV2)  wiringManagerV2.nextId  = 0;
+        
+        // 6. Финальные обновления UI
+        updateEstimateDebounced();
+    },
+     /**
+     * Спрашивает подтверждение (если есть что терять), очищает сцену
+     * и передаёт управление _applyProject.
+     */
+    _confirmAndLoad(projectData, filename) {
+        if (!this._isSceneEmpty()) {
+            const ok = confirm(
+                `Загрузить проект "${projectData.meta.projectName}"?\n\n` +
+                `Текущий проект будет полностью заменён. Несохранённые изменения будут потеряны.`
+            );
+            if (!ok) return;
+        }
+        
+        try {
+            this._clearScene();
+        } catch (err) {
+            console.error('ProjectIO._clearScene: ошибка очистки сцены', err);
+            alert('Не удалось очистить сцену перед загрузкой:\n' + err.message);
+            return;
+        }
+        
+        // Заглушка — реальная загрузка появится в шаге 5C
+        this._applyProject(projectData, filename);
+    },
+    
+    /**
+     * Применяет данные провалидированного проекта к сцене.
+     * Предполагается, что сцена уже очищена через _clearScene.
+     * 
+     * Порядок восстановления (важен из-за зависимостей):
+     *   1. view (zoom, pan) — чтобы пользователь видел проект в нужном масштабе
+     *   2. layers — модули и рейки ссылаются на layerId
+     *   3. rails — модули располагаются на рейках
+     *   4. modules + terminals — провода соединяют клеммы
+     *   5. wires
+     *   6. activeLayerId, финализация UI
+     */
+    async _applyProject(projectData, filename) {
+        const errors = [];
+        
+        try { this._applyView(projectData.view); }
+        catch (err) { errors.push(`view: ${err.message}`); console.error('ProjectIO._applyView:', err); }
+        
+        try { this._applyLayers(projectData.layers); }
+        catch (err) { errors.push(`layers: ${err.message}`); console.error('ProjectIO._applyLayers:', err); }
+        
+        try { this._applyRails(projectData.rails); }
+        catch (err) { errors.push(`rails: ${err.message}`); console.error('ProjectIO._applyRails:', err); }
+        
+        try { await this._applyModules(projectData.modules); }
+        catch (err) { errors.push(`modules: ${err.message}`); console.error('ProjectIO._applyModules:', err); }
+        
+        try { this._applyWires(projectData.wires); }
+        catch (err) { errors.push(`wires: ${err.message}`); console.error('ProjectIO._applyWires:', err); }
+        
+        try { this._finalizeApply(projectData); }
+        catch (err) { errors.push(`finalize: ${err.message}`); console.error('ProjectIO._finalizeApply:', err); }
+        
+         if (errors.length > 0) {
+            alert(
+                `Проект "${projectData.meta.projectName}" загружен с ошибками:\n\n` +
+                errors.join('\n') +
+                `\n\nПодробности в консоли (F12). Сцена может быть в неполном состоянии.`
+            );
+        } else {
+            console.log(`ProjectIO: проект "${projectData.meta.projectName}" из файла "${filename}" успешно загружен`);
+        }
+        
+        // НОВОЕ: предложить импорт избранного, если оно есть в файле
+        this._maybeOfferFavoritesImport(projectData);
+    },
+    _applyView(view) {
+        if (!view) return;
+        
+        window.zoomScale = view.zoom ?? view.scale ?? 1;
+        window.panX     = view.panX ?? 0;
+        window.panY     = view.panY ?? 0;
+        
+        if (typeof updateWorkspaceTransform === 'function') {
+            updateWorkspaceTransform();
+        }
+    },
+    _applyLayers(layers) {
+        if (!Array.isArray(layers) || layers.length === 0) {
+            // Минимум один слой должен быть — default уже есть после _clearScene
+            return;
+        }
+        
+        // Заменяем массив целиком. Default слой обязан присутствовать в файле
+        // (это гарантирует валидатор).
+        LayersUI.items = layers.map(l => ({
+            id:      l.id,
+            name:    l.name,
+            color:   l.color,
+            visible: l.visible !== false,  // дефолт true
+        }));
+        
+        // activeId временно ставим на default — настоящий восстановим в _finalizeApply
+        LayersUI.activeId = 'default';
+        LayersUI.render();
+    },
+    _applyRails(rails) {
+        if (!Array.isArray(rails)) return;
+        
+        const workspace = document.getElementById('workspace');
+        if (!workspace) {
+            throw new Error('Не найден #workspace для размещения реек');
+        }
+        
+        let maxIdNum = -1;
+        
+        rails.forEach(rail => {
+            const modulesPerRow = rail.modulesPerRow || 12;
+            
+            // Используем приватный фабричный метод менеджера, чтобы получить
+            // правильно сконструированный DOM-элемент рейки (с разметкой, классами и т.п.).
+            // Затем переопределяем id и геометрию.
+            const railEl = dinRailManagerV2._createRailElement(modulesPerRow);
+            
+            // Назначаем сохранённый ID
+            railEl.id = rail.id;
+            
+            // Геометрия — точно как в файле (а не "по центру экрана")
+            railEl.style.left  = rail.x + 'px';
+            railEl.style.top   = rail.y + 'px';
+            if (rail.widthPx) {
+                railEl.style.width = rail.widthPx + 'px';
+            }
+            
+            // Слой
+            railEl.dataset.layerId = rail.layerId || 'default';
+            const layer = LayersUI.items.find(l => l.id === railEl.dataset.layerId);
+            if (layer && !layer.visible) {
+                railEl.style.display = 'none';
+            }
+            
+            workspace.appendChild(railEl);
+            dinRailManagerV2.rails.set(rail.id, railEl);
+            dinRailManagerV2.enableRailDragging(railEl);
+            
+            // Отслеживаем максимальный номер ID (rail_v2_N → N)
+            const m = /rail_v2_(\d+)/.exec(rail.id);
+            if (m) maxIdNum = Math.max(maxIdNum, parseInt(m[1], 10));
+        });
+        
+        // Сдвигаем счётчик, чтобы новые рейки не конфликтовали по ID
+        if (maxIdNum >= 0) {
+            dinRailManagerV2.nextId = Math.max(dinRailManagerV2.nextId || 0, maxIdNum + 1);
+        }
+        
+        dinRailManagerV2.guideLineManager.updateFromRails();
+    },
+    async _applyModules(modules) {
+        if (!Array.isArray(modules) || modules.length === 0) return;
+        
+        // Сортируем по числовой части ID, чтобы создавать в правильном порядке
+        const sorted = [...modules].sort((a, b) => {
+            const na = parseInt((a.id.match(/(\d+)$/) || [0,0])[1], 10);
+            const nb = parseInt((b.id.match(/(\d+)$/) || [0,0])[1], 10);
+            return na - nb;
+        });
+        
+        for (const savedModule of sorted) {
+            try {
+                await this._createOneModule(savedModule);
+            } catch (err) {
+                console.error(`ProjectIO._applyModules: ошибка для ${savedModule.id}:`, err);
+            }
+        }
+        
+        // Финально сдвигаем nextId выше всех использованных, чтобы новые модули
+        // не конфликтовали с загруженными
+        let maxNum = -1;
+        for (const id of moduleManagerV2.modules.keys()) {
+            const m = /^mod_v2_(\d+)$/.exec(id);
+            if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+        }
+        if (maxNum >= 0) moduleManagerV2.nextId = maxNum + 1;
+    },
+    
+    async _createOneModule(savedModule) {
+        const { brand, series, type, params, id: targetId } = savedModule;
+        
+        // Извлекаем нужный номер из targetId, например "mod_v2_2" -> 2
+        const match = /^mod_v2_(\d+)$/.exec(targetId);
+        if (!match) {
+            console.warn(`ProjectIO: некорректный ID ${targetId}, пропускаем`);
+            return;
+        }
+        const targetNum = parseInt(match[1], 10);
+        
+        // Если nextId уже больше, чем targetNum — мы не сможем получить нужный ID штатно.
+        // Это значит, что какой-то предыдущий модуль уже занял этот номер. Такого
+        // быть не должно при правильной сортировке, но подстрахуемся.
+        if (moduleManagerV2.nextId > targetNum) {
+            console.error(`ProjectIO: nextId=${moduleManagerV2.nextId} уже больше ${targetNum}, конфликт ID для ${targetId}`);
+            return;
+        }
+        
+        // Подкручиваем nextId так, чтобы createModule сгенерил ровно нужный ID
+        moduleManagerV2.nextId = targetNum;
+        
+        const newModuleEl = await moduleManagerV2.createModule(
+            brand, series, type, params || {}
+        );
+        if (!newModuleEl) {
+            console.warn(`ProjectIO: createModule вернул null для ${targetId}`);
+            return;
+        }
+        
+        // Sanity check
+        const actualId = newModuleEl.dataset.moduleId;
+        if (actualId !== targetId) {
+            console.warn(`ProjectIO: ожидали ID ${targetId}, получили ${actualId}`);
+        }
+        
+        // Помещаем в DOM (createModule этого не делает)
+        this._attachModuleToDom(newModuleEl, savedModule);
+    },
+    
+    _renameModule(moduleEl, oldId, newId) {
+        // DOM
+        moduleEl.dataset.moduleId = newId;
+        
+        // modules-Map
+        if (moduleManagerV2.modules.has(oldId)) {
+            moduleManagerV2.modules.delete(oldId);
+        }
+        moduleManagerV2.modules.set(newId, moduleEl);
+        
+        // configs-Map
+        if (moduleManagerV2.configs && moduleManagerV2.configs.has(oldId)) {
+            const cfg = moduleManagerV2.configs.get(oldId);
+            moduleManagerV2.configs.delete(oldId);
+            moduleManagerV2.configs.set(newId, cfg);
+        }
+    },
+    
+    _renumberTerminals(moduleEl, savedModuleId) {
+        const terminalEls = moduleEl.querySelectorAll('.terminal-v2');
+        
+        terminalEls.forEach((termEl, i) => {
+            const oldId = termEl.id;
+            const newId = `term_v2_${savedModuleId}_${i}`;
+            
+            if (oldId === newId) return;
+            
+            // DOM
+            termEl.id = newId;
+            if (termEl.dataset) termEl.dataset.moduleId = savedModuleId;
+            
+            // terminals-Map
+            if (moduleManagerV2.terminals.has(oldId)) {
+                const ref = moduleManagerV2.terminals.get(oldId);
+                moduleManagerV2.terminals.delete(oldId);
+                moduleManagerV2.terminals.set(newId, ref);
+            } else {
+                // на всякий случай
+                moduleManagerV2.terminals.set(newId, termEl);
+            }
+        });
+    },
+    
+    _attachModuleToDom(moduleEl, savedModule) {
+        // Свободный модуль — просто в workspace
+        if (!savedModule.railId) {
+            const workspace = document.getElementById('workspace');
+            workspace.appendChild(moduleEl);
+            moduleEl.style.position = 'absolute';
+            moduleEl.style.left = (savedModule.x ?? 0) + 'px';
+            moduleEl.style.top  = (savedModule.y ?? 0) + 'px';
+            return;
+        }
+        
+        // Модуль на рейке — через штатный snapModuleToRail
+        const railEl = dinRailManagerV2.rails?.get?.(savedModule.railId);
+        if (!railEl) {
+            console.warn(`ProjectIO: рейка ${savedModule.railId} не найдена для ${savedModule.id}, кладём в workspace`);
+            const workspace = document.getElementById('workspace');
+            workspace.appendChild(moduleEl);
+            moduleEl.style.position = 'absolute';
+            moduleEl.style.left = (savedModule.x ?? 0) + 'px';
+            moduleEl.style.top  = (savedModule.y ?? 0) + 'px';
+            return;
+        }
+        
+        // ВАЖНО: snapModuleToRail требует, чтобы у moduleEl были clientWidth/clientHeight,
+        // а они вычисляются только когда элемент в DOM.
+        // Поэтому сначала временно вставляем в workspace, чтобы размеры посчитались,
+        // потом snapModuleToRail сам перенесёт на рейку.
+        const workspace = document.getElementById('workspace');
+        workspace.appendChild(moduleEl);
+        
+        // Целевая позиция по X — то, что было в проекте
+        const targetLeftPx = savedModule.localX ?? savedModule.x ?? 0;
+        
+        const ok = dinRailManagerV2.snapModuleToRail(moduleEl, railEl, targetLeftPx);
+        if (!ok) {
+            console.warn(`ProjectIO: snapModuleToRail вернул false для ${savedModule.id}, модуль остался в workspace`);
+            // Fallback — оставляем в workspace по сохранённым координатам
+            moduleEl.style.left = (savedModule.x ?? 0) + 'px';
+            moduleEl.style.top  = (savedModule.y ?? 0) + 'px';
+        }
+    },
+
+    //-----------провода------------
+    _applyWires(wires) {
+        if (!Array.isArray(wires)) return;
+        
+        let maxIdNum = -1;
+        let skipped = 0;
+        
+        wires.forEach(savedWire => {
+            // Проверяем, что обе клеммы существуют после восстановления модулей
+            const fromTerm = moduleManagerV2.terminals.get(savedWire.from);
+            const toTerm   = moduleManagerV2.terminals.get(savedWire.to);
+            
+            if (!fromTerm || !toTerm) {
+                console.warn(
+                    `ProjectIO._applyWires: пропускаем провод ${savedWire.id}: ` +
+                    `клемма ${!fromTerm ? savedWire.from : savedWire.to} не найдена`
+                );
+                skipped++;
+                return;
+            }
+            
+            // Глубокая копия — на случай, если объект ещё где-то используется
+            const wire = JSON.parse(JSON.stringify(savedWire));
+            
+            // Кладём провод в массив менеджера
+            wiringManagerV2.wires.push(wire);
+            
+            // Окрашиваем клеммы (как это делает живой движок при создании провода)
+            if (typeof wiringManagerV2.updateTerminalColor === 'function') {
+                try {
+                    wiringManagerV2.updateTerminalColor(wire.from, wire.color);
+                    wiringManagerV2.updateTerminalColor(wire.to,   wire.color);
+                } catch (err) {
+                    console.warn(`ProjectIO: updateTerminalColor для ${wire.id}:`, err);
+                }
+            }
+            
+            // Отслеживаем номер ID
+            const m = /wire_v2_(\d+)/.exec(wire.id);
+            if (m) maxIdNum = Math.max(maxIdNum, parseInt(m[1], 10));
+        });
+        
+        // Сдвигаем счётчик, чтобы новые провода не конфликтовали
+        if (maxIdNum >= 0) {
+            wiringManagerV2.nextId = Math.max(wiringManagerV2.nextId || 0, maxIdNum + 1);
+        }
+        
+        // Отрисовываем все провода разом из их сохранённых breakpoints
+        try {
+            wiringManagerV2.renderWires();
+        } catch (err) {
+            console.error('ProjectIO._applyWires: ошибка renderWires:', err);
+            throw err;
+        }
+        
+        if (skipped > 0) {
+            console.warn(`ProjectIO._applyWires: пропущено ${skipped} проводов из-за отсутствующих клемм`);
+        }
+    },
+    _finalizeApply(projectData) {
+        // Восстанавливаем активный слой
+        const activeId = projectData.activeLayerId || 'default';
+        const exists   = LayersUI.items.some(l => l.id === activeId);
+        LayersUI.activeId = exists ? activeId : 'default';
+        LayersUI.render();
+        
+        // Финальные обновления UI
+        if (typeof updateEstimateDebounced === 'function') {
+            updateEstimateDebounced();
+        }
+    },
+};
+/**
+ * Скачивает данные как JSON-файл через временную ссылку.
+ * @param {Object} data    - объект для сериализации
+ * @param {string} filename - имя файла без расширения
+ */
+function downloadJSON(data, filename) {
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename.endsWith('.json') ? filename : `${filename}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // Освобождаем память асинхронно (после клика)
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+// ===================== СЕРИАЛИЗАЦИЯ ПРОЕКТА =====================
+/**
+ * Извлекает текущее состояние проекта из DOM и менеджеров
+ * в JS-объект, соответствующий формату 1.0.
+ * 
+ * Не изменяет состояние приложения — только читает.
+ */
+const ProjectSerializer = {
+    FORMAT_VERSION: '1.0.0',
+    APP_VERSION: '0.5.0',
+    
+    /**
+     * Главный метод. Собирает полный объект проекта.
+     * @param {Object} options
+     * @param {boolean} options.includeFavorites - включать ли избранное в файл
+     * @param {string} options.projectName - имя проекта (если не задано — "Без названия")
+     * @returns {Object} объект формата 1.0
+     */
+    extract(options = {}) {
+        const { includeFavorites = false, projectName = 'Без названия' } = options;
+        
+        const project = {
+            meta:          this._extractMeta(projectName),
+            view:          this._extractView(),
+            layers:        this._extractLayers(),
+            activeLayerId: this._extractActiveLayerId(),
+            rails:         this._extractRails(),
+            modules:       this._extractModules(),
+            wires:         this._extractWires(),
+        };
+        
+        if (includeFavorites) {
+            project.favorites = this._extractFavorites();
+        }
+        
+        return project;
+    },
+    
+    /**
+     * Метаданные проекта.
+     * createdAt появляется только при первом сохранении проекта.
+     * Если проект уже был сохранён — createdAt берётся из него (передаётся отдельно).
+     */
+    _extractMeta(projectName) {
+        const now = new Date().toISOString();
+        return {
+            formatVersion: this.FORMAT_VERSION,
+            appVersion:    this.APP_VERSION,
+            projectName:   projectName,
+            createdAt:     now,
+            modifiedAt:    now,
+            author:        '',
+            description:   '',
+        };
+    },
+     /**
+     * Состояние вида: зум и панорамирование.
+     * Выделение не сохраняется (эфемерное).
+     */
+    _extractView() {
+        return {
+            zoom: window.zoomScale ?? 1,
+            panX: window.panX ?? 0,
+            panY: window.panY ?? 0
+        };
+    },
+    /**
+     * Слои и активный слой.
+     * Берём напрямую из LayersUI — там единый источник правды.
+     */
+    _extractLayers() {
+        return LayersUI.items.map(layer => ({
+            id:      layer.id,
+            name:    layer.name,
+            color:   layer.color,
+            visible: layer.visible,
+        }));
+    },
+    
+    _extractActiveLayerId() {
+        return LayersUI.activeId;
+    },
+    /**
+     * Все DIN-рейки на схеме.
+     * Координаты — из style (логические, в координатах workspace).
+     * Ширину/высоту не сохраняем — они вычисляются из modulesCount.
+     */
+    _extractRails() {
+        const rails = [];
+        document.querySelectorAll('.din-rail-v2').forEach(railEl => {
+            rails.push({
+                id:            railEl.id,
+                x:             parseFloat(railEl.style.left)  || 0,
+                y:             parseFloat(railEl.style.top)   || 0,
+                widthPx:       parseFloat(railEl.style.width) || 0,
+                modulesPerRow: parseInt(railEl.dataset.modulesPerRow, 10) || 12,
+                layerId:       railEl.dataset.layerId || 'default',
+            });
+        });
+        return rails;
+    },
+    /**
+     * Все модули на схеме.
+     * Координаты:
+     *   - если модуль на рейке (railId есть) → x,y относительно рейки
+     *   - если модуль свободный → x,y в координатах workspace
+     * 
+     * Параметры (poles, amps и т.д.) берём из configs менеджера —
+     * это единственный источник правды о настройках модуля.
+     */
+    _extractModules() {
+        const result = [];
+        for (const [id, moduleEl] of moduleManagerV2.modules) {
+            const config = moduleManagerV2.configs?.get(id) || {};
+            const railId = moduleEl.dataset.railId || null;
+            
+            const localX = parseFloat(moduleEl.style.left) || 0;
+            const localY = parseFloat(moduleEl.style.top) || 0;
+            
+            result.push({
+                id,
+                brand:  moduleEl.dataset.brand,
+                series: moduleEl.dataset.series,
+                type:   moduleEl.dataset.type,
+                params: config.params || {},
+                
+                railId,
+                // на рейке: localX = координата внутри рейки
+                // вне рейки: localX = координата в workspace
+                x: localX,
+                y: localY
+            });
+        }
+        return result;
+    },
+    
+    /**
+     * Глубокое клонирование params, чтобы JSON-файл не зависел
+     * от изменений в config после извлечения.
+     */
+    _cloneParams(params) {
+        if (!params || typeof params !== 'object') return {};
+        // params — плоский объект со скалярами, structuredClone избыточен.
+        // JSON.parse(JSON.stringify) подходит и не зависит от поддержки браузером.
+        return JSON.parse(JSON.stringify(params));
+    },
+    /**
+     * Все провода со схемы.
+     * Источник правды — wiringManagerV2.wires (Map).
+     */
+    _extractWires() {
+        const wires = [];
+        
+        if (!Array.isArray(wiringManagerV2.wires)) {
+            console.warn('ProjectIO._extractWires: wiringManagerV2.wires не массив');
+            return wires;
+        }
+        
+        wiringManagerV2.wires.forEach(wire => {
+            // Сохраняем provod целиком — все поля, которые есть в объекте.
+            // Глубокое клонирование, чтобы файл проекта не зависел от живых объектов.
+            try {
+                wires.push(JSON.parse(JSON.stringify(wire)));
+            } catch (err) {
+                console.warn(`ProjectIO._extractWires: не удалось сериализовать провод ${wire.id}:`, err);
+            }
+        });
+        
+        return wires;
+    },
+    
+    /**
+     * Извлекает endpoint провода из ID DOM-элемента клеммы.
+     * Возвращает { moduleId, terminalKind, terminalIndex } или null.
+     * 
+     * terminalKind:
+     *   'supply' — главный ввод (.supply-terminal), moduleId=null
+     *   'normal' — обычная клемма модуля (.terminal-v2)
+     * 
+     * terminalIndex для 'normal' — позиция в querySelectorAll('.terminal-v2')
+     * внутри модуля. Для 'supply' — ID самого supply-элемента.
+     */
+    _extractEndpoint(terminalId) {
+        if (typeof terminalId !== 'string' || !terminalId) {
+            console.warn('ProjectSerializer: endpoint не строка:', terminalId);
+            return null;
+        }
+        
+        const el = document.getElementById(terminalId);
+        if (!el) {
+            console.warn(`ProjectSerializer: клемма ${terminalId} не найдена в DOM`);
+            return null;
+        }
+        
+        // Главный ввод (supply-terminal) — отдельный случай
+        if (el.classList.contains('supply-terminal')) {
+            return {
+                terminalKind: 'supply',
+                supplyId:     terminalId,        // ID supply-элемента, чтобы при загрузке найти
+                tag:          el.dataset.tag,    // L/N/PE и т.п.
+            };
+        }
+        
+        // Обычная клемма модуля
+        const moduleEl = el.closest('.module-v2');
+        if (!moduleEl) {
+            console.warn(`ProjectSerializer: клемма ${terminalId} не принадлежит модулю`);
+            return null;
+        }
+        
+        const moduleId = moduleEl.dataset.moduleId;
+        const terminals = Array.from(moduleEl.querySelectorAll('.terminal-v2'));
+        const terminalIndex = terminals.indexOf(el);
+        
+        if (terminalIndex === -1) {
+            console.warn(`ProjectSerializer: клемма ${terminalId} не найдена среди .terminal-v2 модуля ${moduleId}`);
+            return null;
+        }
+        
+        return {
+            terminalKind:  'normal',
+            moduleId:      moduleId,
+            terminalIndex: terminalIndex,
+        };
+    },
+    
+    /**
+     * Глубокое клонирование breakpoints.
+     * Структура: { type: 'module'|'supply', points: [{x,y}, ...] }
+     */
+    _cloneBreakpoints(breakpoints) {
+        if (!breakpoints || !breakpoints.points) return null;
+        return {
+            type: breakpoints.type,
+            points: breakpoints.points.map(p => ({ x: p.x, y: p.y })),
+        };
+    },
+     /**
+     * Избранные модули из FavoritesUI.
+     * Извлекаются только когда includeFavorites=true.
+     */
+    _extractFavorites() {
+    if (typeof FavoritesUI === 'undefined' || !Array.isArray(FavoritesUI.items)) return [];
+    
+    return FavoritesUI.items.map(item => ({
+        brand:   item.brand,
+        series:  item.series,
+        type:    item.type,
+        name:    item.name || '',
+        params:  this._cloneParams(item.params),
+    }));
+},
+};
 </script>
 </body>
 </html>
