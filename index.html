@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.7</title>
+    <title>Конструктор Щита v4.13.8</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9673,19 +9673,45 @@ document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
 let minLeft = Infinity, minTop = Infinity;
 let maxRight = -Infinity, maxBottom = -Infinity;
 
+// 3a. Модули и DIN-рейки
 document.querySelectorAll('.module-v2, .din-rail-v2').forEach(el => {
     const left = parseFloat(el.style.left) || 0;
     const top  = parseFloat(el.style.top)  || 0;
     const w = el.offsetWidth  || 0;
     const h = el.offsetHeight || 0;
     if (w === 0 || h === 0) return;
-    if (left < minLeft)        minLeft = left;
-    if (top  < minTop)         minTop  = top;
-    if (left + w > maxRight)   maxRight = left + w;
+    if (left < minLeft)        minLeft   = left;
+    if (top  < minTop)         minTop    = top;
+    if (left + w > maxRight)   maxRight  = left + w;
     if (top  + h > maxBottom)  maxBottom = top  + h;
 });
 
-// Точки проводов
+// 3b. Реальные границы всего SVG-контента (провода, гребёнки, маркеры)
+//    getBBox() возвращает координаты в пользовательской системе SVG —
+//    это именно те координаты, в которых живут провода (совпадают с workspace).
+const measureSvgContent = (svg) => {
+    if (!svg) return;
+    // Берём все графические потомки
+    const nodes = svg.querySelectorAll('path, line, polyline, polygon, rect, circle, ellipse, g, text');
+    nodes.forEach(node => {
+        try {
+            const bb = node.getBBox();
+            if (!bb || (bb.width === 0 && bb.height === 0)) return;
+            if (bb.x < minLeft)                minLeft   = bb.x;
+            if (bb.y < minTop)                 minTop    = bb.y;
+            if (bb.x + bb.width  > maxRight)   maxRight  = bb.x + bb.width;
+            if (bb.y + bb.height > maxBottom)  maxBottom = bb.y + bb.height;
+        } catch (e) { /* getBBox может падать на скрытых нодах — игнор */ }
+    });
+};
+
+measureSvgContent(svgWires);
+measureSvgContent(svgCombs);
+if (markersLayer && markersLayer.tagName.toLowerCase() === 'svg') {
+    measureSvgContent(markersLayer);
+}
+
+// 3c. Точки изломов (на всякий случай, если getBBox что-то упустил)
 if (window.wiringManagerV2?.wires) {
     wiringManagerV2.wires.forEach(w => {
         const pts = w.breakpoints?.points;
@@ -9702,12 +9728,6 @@ if (window.wiringManagerV2?.wires) {
 if (!isFinite(minLeft)) {
     minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
 }
-
-const PADDING = 40;
-const captureX = minLeft  - PADDING;   // может быть отрицательным
-const captureY = minTop   - PADDING;
-const captureW = (maxRight  - minLeft) + PADDING * 2;
-const captureH = (maxBottom - minTop)  + PADDING * 2;
 
 // 4. Расширяем workspace и SVG-слои
 const expandedW = Math.max(captureX + captureW, parseFloat(savedWsWidth)  || 0);
