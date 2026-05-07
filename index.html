@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.7</title>
+    <title>Конструктор Щита v4.13.8</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9736,11 +9736,12 @@ const captureW = (maxRight  - minLeft) + PADDING * 2;
 const captureH = (maxBottom - minTop)  + PADDING * 2;
 
 // 4. Расширяем workspace и SVG-слои
-const expandedW = Math.max(captureX + captureW, parseFloat(savedWsWidth)  || 0);
-const expandedH = Math.max(captureY + captureH, parseFloat(savedWsHeight) || 0);
+workspace.style.transformOrigin = '0 0';
+workspace.style.transform = `translate(${-captureX}px, ${-captureY}px) scale(1)`;
 
-workspace.style.width  = expandedW + 'px';
-workspace.style.height = expandedH + 'px';
+// Размер workspace = размер capture-региона
+workspace.style.width  = captureW + 'px';
+workspace.style.height = captureH + 'px';
 
 // SVG-слои: меняем И стили, И атрибуты width/height (они приоритетнее!)
 const expandSvg = (svg) => {
@@ -9750,16 +9751,17 @@ const expandSvg = (svg) => {
         attrH: svg.getAttribute('height'),
         attrViewBox: svg.getAttribute('viewBox'),
         styleOverflow: svg.style.overflow,
+        styleW: svg.style.width,
+        styleH: svg.style.height,
     };
-    svg.setAttribute('width',  expandedW);
-    svg.setAttribute('height', expandedH);
-    // Если был viewBox — расширяем его, иначе НЕ создаём (1:1 рендер)
+    svg.setAttribute('width',  captureW);
+    svg.setAttribute('height', captureH);
     if (saved.attrViewBox) {
-        svg.setAttribute('viewBox', `0 0 ${expandedW} ${expandedH}`);
+        svg.setAttribute('viewBox', `0 0 ${captureW} ${captureH}`);
     }
     svg.style.overflow = 'visible';
-    svg.style.width  = expandedW + 'px';
-    svg.style.height = expandedH + 'px';
+    svg.style.width  = captureW + 'px';
+    svg.style.height = captureH + 'px';
     return saved;
 };
 
@@ -9809,8 +9811,8 @@ const canvasScheme = await html2canvas(workspace, {
     scale: 2,
     useCORS: true,
     backgroundColor: '#ffffff',
-    x: captureX,
-    y: captureY,
+    x: 0,
+    y: 0,
     width:  captureW,
     height: captureH,
     windowWidth:  Math.max(captureW, document.documentElement.clientWidth),
@@ -9844,8 +9846,10 @@ const restoreSvg = (svg, saved) => {
     if (!svg || !saved) return;
     if (saved.attrW    !== null) svg.setAttribute('width',  saved.attrW);    else svg.removeAttribute('width');
     if (saved.attrH    !== null) svg.setAttribute('height', saved.attrH);    else svg.removeAttribute('height');
-    if (saved.attrViewBox !== null) svg.setAttribute('viewBox', saved.attrViewBox);
+    if (saved.attrViewBox !== null) svg.setAttribute('viewBox', saved.attrViewBox); else svg.removeAttribute('viewBox');
     svg.style.overflow = saved.styleOverflow;
+    svg.style.width    = saved.styleW;   // ← добавили
+    svg.style.height   = saved.styleH;   // ← добавили
 };
 restoreSvg(svgWires,    savedSvgWires);
 restoreSvg(svgCombs,    savedSvgCombs);
