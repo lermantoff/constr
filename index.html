@@ -3,13 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.12.3</title>
+    <title>Конструктор Щита v4.13.3</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
     <style>
-
+/* Маркеры проводов */
+#markers-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 75;
+    overflow: visible !important;
+}
+.wire-marker {
+    pointer-events: none;
+}
+.wire-marker rect {
+    stroke: rgba(0,0,0,0.4);
+    stroke-width: 0.5;
+}
+.wire-marker text {
+    fill: #000;
+    font-family: 'Segoe UI', sans-serif;
+    font-weight: bold;
+    font-size: 10px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    user-select: none;
+}
 /* Эффект свечения для выделенных элементов */
 .ui-selected {
     outline: 2px solid #3498db;
@@ -858,45 +884,63 @@
         }
         
         .terminal-v2 {
-            position: absolute;
-            width: 15px;
-            height: 15px;
-            border-radius: 50%;
-            background: #555;
-            border: 1px solid #333;
-            cursor: crosshair;
-            z-index: 101;
-            transition: transform 0.2s;
-        }
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    margin-left: -2.5px;   /* компенсация: центр клеммы остаётся на старом месте */
+    margin-top: -2.5px;
+    border-radius: 50%;
+    background: #1a1a1a;   /* по умолчанию — чёрный */
+    border: 1px solid #000;
+    cursor: crosshair;
+    z-index: 101;
+    transition: transform 0.2s, background 0.15s, color 0.15s;
+    
+    /* Центрирование текста-тега внутри клеммы */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 1;
+    color: #fff;            /* белый по умолчанию */
+    user-select: none;
+    box-sizing: border-box;
+    text-align: center;
+    letter-spacing: -0.3px;
+}
+
+.terminal-v2:hover {
+    transform: scale(1.25);
+    border-color: #fff;
+    z-index: 110;
+}
+
+.terminal-v2.connected {
+    border-color: #fff !important;
+    box-shadow: 0 0 4px rgba(0,0,0,0.6);
+}
+
+/* Когда на клемме есть провод (т.е. она «подключена») — текст чёрный.
+   Цвет фона задаётся inline через wiringManagerV2.updateTerminalColor */
+.terminal-v2.wired {
+    color: #000;
+}
+
+/* Длинные теги (L1/L2/L3, L/N) — чуть мельче, чтобы влезали */
+.terminal-v2[data-tag="L1"],
+.terminal-v2[data-tag="L2"],
+.terminal-v2[data-tag="L3"],
+.terminal-v2[data-tag="L/N"] {
+    font-size: 7px;
+}
+
+.terminal-v2[data-tag="All"] {
+    font-size: 6px;
+}
         
-        .terminal-v2:hover {
-            transform: scale(1.3);
-            border-color: #fff;
-        }
         
-        .terminal-v2.connected {
-            border-color: #fff !important;
-            box-shadow: 0 0 4px #000;
-        }
-        
-        .terminal-v2::after {
-            content: attr(data-tag);
-            position: absolute;
-            top: -18px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 9px;
-            font-weight: bold;
-            color: #2c3e50;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 1px 4px;
-            border-radius: 2px;
-            border: 1px solid #bdc3c7;
-            white-space: nowrap;
-            opacity: 0.8;
-            pointer-events: none;
-            z-index: 150;
-        }
         
         /* Стили для селектора модулей v2 */
         .module-selector-v2 {
@@ -1116,6 +1160,7 @@
 
         <svg id="wires-layer"></svg>
         <svg id="comb-layer"></svg>
+        <svg id="markers-layer"></svg>
     </div>
     </div>
 
@@ -1220,6 +1265,12 @@
                     <div style="display:flex; gap:5px;">
     <button id="mode-wire" class="mode-btn active">Провод</button>
     <button id="mode-comb" class="mode-btn">Гребенка</button>
+</div>
+<div class="tool-row" style="margin-top: 8px;">
+    <button class="sidebar-btn" style="width:100%; background:#8e44ad;" 
+            onclick="WireMarkerManager.renumberAll()">
+        🔢 Пересчитать маркеры
+    </button>
 </div>
                 </div>
             </div>
@@ -5531,8 +5582,10 @@ createTerminalElement(moduleId, termIndex, termConfig) {
     div.style.left = termConfig.x + 'px';
     div.style.top = termConfig.y + 'px';
     
+    // НОВОЕ: тег теперь рисуется внутри клеммы
+    div.textContent = termConfig.defaultTag || '';
     
-    // Добавляем обработчик клика
+    // Обработчик клика
     div.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -5763,15 +5816,15 @@ setTag(terminalId, tag) {
     const el = document.getElementById(terminalId);
     if (!el) return false;
     
-    // Не меняем тег у защищенных клемм
     if (this.isTerminalProtected(el)) {
         return false;
     }
     
     const oldTag = el.dataset.tag;
-    // Всегда обновляем, если тег отличается и не защищён
     if (oldTag !== tag) {
         el.dataset.tag = tag;
+        // НОВОЕ: синхронизируем подпись внутри клеммы
+        el.textContent = tag || '';
         return true;
     }
     
@@ -5984,19 +6037,35 @@ getRoundedPath(points, radius = 30) {
     d += ` L ${points[points.length - 1].x} ${points[points.length - 1].y}`;
     return d;
 }
+/**
+ * Возвращает точку, смещённую от `from` к `to` на distance пикселей.
+ * Если расстояние меньше distance — возвращает исходную точку.
+ */
+_shiftToward(from, to, distance) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy);
+    if (len < distance + 0.5) return { x: from.x, y: from.y };
+    return {
+        x: from.x + (dx / len) * distance,
+        y: from.y + (dy / len) * distance,
+    };
+}
 
 // Обновить цвет клеммы
 updateTerminalColor(terminalId, color) {
     const terminal = document.getElementById(terminalId);
     if (!terminal) return;
     
-    // Не меняем цвет главного ввода и шин
     if (terminal.classList.contains('supply-terminal')) return;
     if (terminal.dataset.type === 'bus') return;
     
     const hexColor = this.getWireColor(color);
     terminal.style.backgroundColor = hexColor;
     terminal.style.borderColor = hexColor;
+    
+    // НОВОЕ: помечаем клемму как подключённую — CSS сделает текст чёрным
+    terminal.classList.add('wired');
 }
 // Сбросить цвет клеммы (если на ней больше нет проводов)
 resetTerminalColor(terminalId) {
@@ -6011,14 +6080,16 @@ resetTerminalColor(terminalId) {
     );
     
     if (remainingWires.length === 0) {
-        // Полностью сбрасываем стиль — клемма «голая»
+        // Полностью голая клемма: чёрный фон, белый текст
         terminal.style.backgroundColor = '';
         terminal.style.borderColor = '';
+        terminal.classList.remove('wired');
     } else {
         // Перекрашиваем по цвету первого оставшегося провода
         const newColor = this.getWireColor(remainingWires[0].color);
         terminal.style.backgroundColor = newColor;
         terminal.style.borderColor = newColor;
+        terminal.classList.add('wired');
     }
 }
 
@@ -6210,6 +6281,7 @@ completeWiring(targetTerminal) {
 // Теперь wire полностью инициализирован, можно передавать его в calculateBreakpoints
 wire.breakpoints = this.calculateBreakpoints(this.wiringStartTerminal, targetTerminal, wire);
     
+    WireMarkerManager.assignNumber(wire);
     this.wires.push(wire);
     this.invalidateTerminalCache();
     
@@ -6514,7 +6586,23 @@ updateWiresForModule(moduleId, shouldRender = true) {
             wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
         }
         
-        const d = this.getRoundedPath(wire.breakpoints.points, APP_CONFIG.WIRE_CORNER_RADIUS);
+        // Укорачиваем концы пути, чтобы линия не залезала под текст тега в клемме.
+// Сама структура wire.breakpoints.points НЕ меняется — маркеры используют оригинал.
+const TERMINAL_INSET = 9; // ~ радиус клеммы (20/2 = 10), берём чуть меньше для прилегания
+const rawPts = wire.breakpoints.points;
+let ptsForPath = rawPts;
+
+if (rawPts.length >= 2) {
+    ptsForPath = rawPts.slice(); // поверхностная копия, элементы — те же объекты
+    ptsForPath[0] = this._shiftToward(rawPts[0], rawPts[1], TERMINAL_INSET);
+    ptsForPath[ptsForPath.length - 1] = this._shiftToward(
+        rawPts[rawPts.length - 1],
+        rawPts[rawPts.length - 2],
+        TERMINAL_INSET
+    );
+}
+
+const d = this.getRoundedPath(ptsForPath, APP_CONFIG.WIRE_CORNER_RADIUS);
         const targetSvg = wire.mode === 'comb' ? svgCombs : svgWires;
         const color = this.getWireColor(wire.color);
         const thickness = this.getWireThickness(wire.thickness);
@@ -6543,6 +6631,7 @@ updateWiresForModule(moduleId, shouldRender = true) {
     });
     
     this.updateLayers();
+    WireMarkerManager.renderAll();
 }
 
 /**
@@ -6859,28 +6948,269 @@ updateLayers() {
     if (!window.LayersUI) return;
     const activeId = LayersUI.getActiveId();
     
-    document.querySelectorAll('path.wire').forEach(path => {
-        const wireId = path.dataset.wireId;
-        const wire = this.wires.find(w => w.id === wireId);
-        if (!wire) return;
-        
+    const computeOpacity = (wire) => {
         const layer = LayersUI.getLayerById(wire.layerId);
-        path.style.display = (layer && layer.visible) ? 'block' : 'none';
-        path.style.opacity = (wire.layerId === activeId) ? '1' : '0.3';
+        // Слой не найден — показываем как обычный неактивный
+        if (!layer) return '0.3';
+        // Слой скрыт — полупрозрачный
+        if (!layer.visible) return '0.15';
+        // Слой видим: активный — 1, иначе 0.3
+        return (wire.layerId === activeId) ? '1' : '0.3';
+    };
+    
+    document.querySelectorAll('path.wire').forEach(path => {
+        const wire = this.wires.find(w => w.id === path.dataset.wireId);
+        if (!wire) return;
+        path.style.display = '';                 // никогда не прячем
+        path.style.opacity = computeOpacity(wire);
     });
     
     document.querySelectorAll('circle.pivot').forEach(circle => {
-        const wireId = circle.dataset.wireId;
-        const wire = this.wires.find(w => w.id === wireId);
+        const wire = this.wires.find(w => w.id === circle.dataset.wireId);
         if (!wire) return;
-        
         const layer = LayersUI.getLayerById(wire.layerId);
-        circle.style.display = (layer && layer.visible) ? 'block' : 'none';
+        // Пивоты показываем только для активного видимого слоя — иначе бессмысленно
+        const isInteractive = layer && layer.visible && wire.layerId === activeId;
+        circle.style.display = isInteractive ? '' : 'none';
     });
 }
 
 }
-
+// ===================== МЕНЕДЖЕР МАРКЕРОВ ПРОВОДОВ =====================
+const WireMarkerManager = {
+    nextMarkerNumber: 1,           // глобальный счётчик n+1
+    SVG_NS: 'http://www.w3.org/2000/svg',
+    
+    // Геометрия маркера
+    MARKER_WIDTH: 14,              // ширина "ярлыка"
+    MARKER_HEIGHT: 22,             // высота "ярлыка" (вдоль провода)
+    OFFSET_FROM_TERMINAL: 18,      // отступ от клеммы вдоль провода
+    
+    init() {
+        // Слой создаётся декларативно в HTML — ничего не делаем
+    },
+    
+    /**
+     * Назначить номер новому проводу. Вызывается при создании провода.
+     */
+    assignNumber(wire) {
+        if (wire.markerNumber == null) {
+            wire.markerNumber = this.nextMarkerNumber++;
+        } else {
+            // Если номер уже задан (например, при загрузке) — сдвигаем счётчик
+            if (wire.markerNumber >= this.nextMarkerNumber) {
+                this.nextMarkerNumber = wire.markerNumber + 1;
+            }
+        }
+    },
+    
+    /**
+     * Полная перерисовка всех маркеров.
+     * Вызывается из renderWires() после отрисовки путей.
+     */
+    renderAll() {
+        const layer = document.getElementById('markers-layer');
+        if (!layer) return;
+        
+        const wires = window.wiringManagerV2?.wires || [];
+        const currentIds = new Set();
+        wires.forEach(w => {
+            currentIds.add(`marker_${w.id}_from`);
+            currentIds.add(`marker_${w.id}_to`);
+        });
+        
+        // Удаляем устаревшие маркеры
+        Array.from(layer.children).forEach(el => {
+            if (!currentIds.has(el.id)) el.remove();
+        });
+        
+        // Создаём/обновляем маркеры для всех проводов
+        wires.forEach(wire => {
+            // Гребёнки маркируем тоже (по требованиям не уточнено, но логично)
+            this._renderMarkerForWire(wire, layer);
+        });
+    },
+    
+    /**
+     * @private
+     * Создаёт/обновляет два маркера (на обоих концах) для одного провода
+     */
+    _renderMarkerForWire(wire, layer) {
+        if (wire.markerNumber == null) return;
+        
+        const points = wire.breakpoints?.points;
+        if (!points || points.length < 2) return;
+        
+        // Точка у from-клеммы и направление "вглубь" провода
+        const p0 = points[0];
+        const p1 = points[1];
+        // Точка у to-клеммы
+        const pLast = points[points.length - 1];
+        const pPrev = points[points.length - 2];
+        
+        const colorHex = window.wiringManagerV2.getWireColor(wire.color);
+        const numberStr = String(wire.markerNumber);
+        
+        this._upsertMarker(
+            layer,
+            `marker_${wire.id}_from`,
+            this._calcMarkerPos(p0, p1),
+            numberStr,
+            colorHex,
+            this._isFromTopHalf(wire.from)
+        );
+        
+        this._upsertMarker(
+            layer,
+            `marker_${wire.id}_to`,
+            this._calcMarkerPos(pLast, pPrev),
+            numberStr,
+            colorHex,
+            this._isFromTopHalf(wire.to)
+        );
+    },
+    
+    /**
+     * @private
+     * Определяет, находится ли клемма в верхней половине модуля
+     * (нужно для понимания, "над" или "под" клеммой ставить маркер)
+     */
+    _isFromTopHalf(terminalId) {
+        const el = document.getElementById(terminalId);
+        if (!el) return true;
+        
+        if (el.classList.contains('supply-terminal') || el.dataset.type === 'in-src') {
+            return true;
+        }
+        
+        const moduleEl = el.closest('.module-v2');
+        if (!moduleEl) return true;
+        
+        const moduleRect = moduleEl.getBoundingClientRect();
+        const termRect = el.getBoundingClientRect();
+        const termCenterY = termRect.top + termRect.height / 2;
+        const modCenterY = moduleRect.top + moduleRect.height / 2;
+        
+        return termCenterY < modCenterY;
+    },
+    
+    /**
+     * @private
+     * Рассчитывает позицию маркера на расстоянии OFFSET_FROM_TERMINAL
+     * от точки terminalPoint в направлении nextPoint
+     */
+    _calcMarkerPos(terminalPoint, nextPoint) {
+        const dx = nextPoint.x - terminalPoint.x;
+        const dy = nextPoint.y - terminalPoint.y;
+        const len = Math.hypot(dx, dy);
+        if (len === 0) return { x: terminalPoint.x, y: terminalPoint.y };
+        
+        const offset = Math.min(this.OFFSET_FROM_TERMINAL, len * 0.5);
+        return {
+            x: terminalPoint.x + (dx / len) * offset,
+            y: terminalPoint.y + (dy / len) * offset,
+        };
+    },
+    
+    /**
+     * @private
+     * Создаёт или обновляет один SVG-маркер.
+     * Маркер — вертикальный прямоугольник с цифрой внутри, текст вертикальный.
+     */
+    _upsertMarker(layer, id, pos, text, fillColor, isTopHalf) {
+        let group = document.getElementById(id);
+        
+        if (!group) {
+            group = document.createElementNS(this.SVG_NS, 'g');
+            group.setAttribute('id', id);
+            group.classList.add('wire-marker');
+            
+            const rect = document.createElementNS(this.SVG_NS, 'rect');
+            rect.setAttribute('x', -this.MARKER_WIDTH / 2);
+            rect.setAttribute('y', -this.MARKER_HEIGHT / 2);
+            rect.setAttribute('width', this.MARKER_WIDTH);
+            rect.setAttribute('height', this.MARKER_HEIGHT);
+            rect.setAttribute('rx', 2);
+            rect.setAttribute('ry', 2);
+            group.appendChild(rect);
+            
+            const txt = document.createElementNS(this.SVG_NS, 'text');
+            txt.setAttribute('x', 0);
+            txt.setAttribute('y', 0);
+            // Вертикальный текст: поворот на -90°. Цифры читаются снизу вверх.
+            txt.setAttribute('transform', 'rotate(-90)');
+            group.appendChild(txt);
+            
+            layer.appendChild(group);
+        }
+        
+        // Обновляем позицию (маркер ориентирован вертикально — без вращения группы)
+        group.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
+        
+        // Цвет фона
+        const rect = group.querySelector('rect');
+        if (rect) rect.setAttribute('fill', fillColor);
+        
+        // Текст
+        const txt = group.querySelector('text');
+        if (txt && txt.textContent !== text) {
+            txt.textContent = text;
+        }
+    },
+    
+    /**
+     * Принудительный пересчёт номеров всех маркеров.
+     * Вызывается из кнопки в сайдбаре.
+     */
+    renumberAll() {
+        const wires = window.wiringManagerV2?.wires || [];
+        if (wires.length === 0) {
+            alert('Нет проводов для пересчёта.');
+            return;
+        }
+        
+        if (!confirm(`Пересчитать номера маркеров для ${wires.length} проводов?`)) {
+            return;
+        }
+        
+        // Сортируем по id (порядок создания) — чтобы нумерация была стабильной
+        const sorted = [...wires].sort((a, b) => {
+            const na = parseInt((a.id.match(/(\d+)$/) || [0,0])[1], 10);
+            const nb = parseInt((b.id.match(/(\d+)$/) || [0,0])[1], 10);
+            return na - nb;
+        });
+        
+        let n = 1;
+        sorted.forEach(w => { w.markerNumber = n++; });
+        this.nextMarkerNumber = n;
+        
+        this.renderAll();
+    },
+    
+    /**
+     * Сбрасывает счётчик и удаляет все маркеры.
+     * Вызывается при очистке сцены.
+     */
+    reset() {
+        this.nextMarkerNumber = 1;
+        const layer = document.getElementById('markers-layer');
+        if (layer) layer.innerHTML = '';
+    },
+    
+    /**
+     * Синхронизирует nextMarkerNumber с максимальным номером из загруженных проводов.
+     */
+    syncCounterFromWires() {
+        const wires = window.wiringManagerV2?.wires || [];
+        let maxN = 0;
+        wires.forEach(w => {
+            if (typeof w.markerNumber === 'number' && w.markerNumber > maxN) {
+                maxN = w.markerNumber;
+            }
+        });
+        this.nextMarkerNumber = maxN + 1;
+    },
+};
 // ===================== МЕНЕДЖЕР НАПРАВЛЯЮЩИХ ДЛЯ ПРОВОДОВ =====================
 class GuideLineManager {
     constructor(workspace, dinRailManager) {
@@ -7955,17 +8285,19 @@ const LayersUI = {
     },
     
     add() {
-        const name = prompt('Название нового слоя:', 'Новый слой');
-        if (!name) return;
-        const layer = {
-            id: 'layer_' + Date.now(),
-            name: name.trim(),
-            color: this.PALETTE[this.items.length % this.PALETTE.length],
-            visible: true,
-        };
-        this.items.push(layer);
-        this.render();
-    },
+    const name = prompt('Название нового слоя:', 'Новый слой');
+    if (!name) return;
+    const layer = {
+        id: 'layer_' + Date.now(),
+        name: name.trim(),
+        color: this.PALETTE[this.items.length % this.PALETTE.length],
+        visible: true,
+    };
+    this.items.push(layer);
+    this.activeId = layer.id;        // ← делаем новый слой активным
+    this.render();
+    this._notifyWiringManager();     // ← уведомляем
+},
     
     delete(layerId) {
         if (layerId === 'default') {
@@ -8033,6 +8365,8 @@ const LayersUI = {
             const isActive = layer.id === this.activeId;
             const isHidden = !layer.visible;
             const canDelete = layer.id !== 'default';
+            window.LayersUI = LayersUI;
+window.FavoritesUI = FavoritesUI;
             
             return `
                 <div class="layer-item ${isActive ? 'active' : ''} ${isHidden ? 'hidden' : ''}"
@@ -9394,7 +9728,10 @@ async function generateProfessionalPDF() {
         wiringManagerV2.wires.forEach(w => {
             const fromInfo = getTermInfo(w.from);
             const toInfo   = getTermInfo(w.to);
-            const wireInfo = (w.mode === 'comb') ? 'Гребенка' : `${w.thickness}мм² (${w.color})`;
+            const markerLabel = (w.markerNumber != null) ? `№${w.markerNumber}` : '—';
+const wireInfo = (w.mode === 'comb') 
+    ? `Гребенка ${markerLabel}` 
+    : `${w.thickness}мм² ${markerLabel}`;
             connectionsData.push([
                 `${fromInfo.name} [Контакт: ${fromInfo.tag}]`,
                 wireInfo,
@@ -9551,6 +9888,7 @@ const App = {
         WireToolsUI.init();
         WireContextMenu.init();
         ModuleContextMenu.init();
+        WireMarkerManager.init();
     },
     
     _initSelectors() {
@@ -9989,6 +10327,7 @@ const ProjectIO = {
         if (window.wiringManagerV2)  wiringManagerV2.nextId  = 0;
         
         // 6. Финальные обновления UI
+        WireMarkerManager.reset();
         updateEstimateDebounced();
     },
      /**
@@ -10346,6 +10685,7 @@ const ProjectIO = {
         // Отрисовываем все провода разом из их сохранённых breakpoints
         try {
             wiringManagerV2.renderWires();
+            WireMarkerManager.syncCounterFromWires();
         } catch (err) {
             console.error('ProjectIO._applyWires: ошибка renderWires:', err);
             throw err;
