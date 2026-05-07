@@ -9755,6 +9755,12 @@ const savedViewportOverflow = viewport.style.overflow;
 viewport.style.overflow = 'visible';
 viewport.style.width  = expandedW + 'px';
 viewport.style.height = expandedH + 'px';
+// Снимаем overflow у body и html — иначе html2canvas обрежет по окну
+const savedBodyOverflow = document.body.style.overflow;
+const savedHtmlOverflow = document.documentElement.style.overflow;
+document.body.style.overflow = 'visible';
+document.documentElement.style.overflow = 'visible';
+
 const savedViewportW = viewport.style.width;
 const savedViewportH = viewport.style.height;
 
@@ -9797,7 +9803,7 @@ window.panX      = savedPanX;
 window.panY      = savedPanY;
 document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
 updateWorkspaceTransform();
-        // Восстановление SVG-атрибутов
+// Восстановление SVG-атрибутов
 const restoreSvg = (svg, saved) => {
     if (!svg || !saved) return;
     if (saved.attrW    !== null) svg.setAttribute('width',  saved.attrW);    else svg.removeAttribute('width');
@@ -9810,6 +9816,8 @@ restoreSvg(svgCombs,    savedSvgCombs);
 restoreSvg(markersLayer, savedMarkersSvg);
 
 viewport.style.overflow = savedViewportOverflow;
+document.body.style.overflow = savedBodyOverflow;
+document.documentElement.style.overflow = savedHtmlOverflow;
 viewport.style.width  = savedViewportW;
 viewport.style.height = savedViewportH;
 
