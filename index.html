@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.5</title>
+    <title>Конструктор Щита v4.13.7</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9778,19 +9778,29 @@ if (markersLayer && !savedMarkersSvg) {
 // КРИТИЧНО: убираем overflow:hidden у предков workspace,
 // иначе html2canvas обрежет содержимое по ним.
 const savedViewportOverflow = viewport.style.overflow;
+const savedViewportW        = viewport.style.width;   // ← СНАЧАЛА сохраняем
+const savedViewportH        = viewport.style.height;
+
 viewport.style.overflow = 'visible';
-viewport.style.width  = expandedW + 'px';
-viewport.style.height = expandedH + 'px';
-// Снимаем overflow у body и html — иначе html2canvas обрежет по окну
+viewport.style.width    = expandedW + 'px';
+viewport.style.height   = expandedH + 'px';
+
+// Снимаем overflow у body и html
 const savedBodyOverflow = document.body.style.overflow;
 const savedHtmlOverflow = document.documentElement.style.overflow;
 document.body.style.overflow = 'visible';
 document.documentElement.style.overflow = 'visible';
 
-const savedViewportW = viewport.style.width;
-const savedViewportH = viewport.style.height;
-
 void workspace.offsetWidth; // reflow
+
+        window.__capDebug = { captureX, captureY, captureW, captureH, minLeft, minTop, maxRight, maxBottom, expandedW, expandedH };
+console.log('DEBUG capture:', window.__capDebug);
+
+// Проверим: совпадают ли реальные SVG-границы с замером
+const wbb = svgWires?.getBBox?.();
+const cbb = svgCombs?.getBBox?.();
+console.log('svgWires BBox:', wbb);
+console.log('svgCombs BBox:', cbb);
 
 // 5. Захват региона html2canvas с явными x/y/width/height.
 //    x/y могут быть отрицательными — тогда html2canvas корректно захватит
