@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.3</title>
+    <title>Конструктор Щита v4.13.4</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9635,50 +9635,145 @@ async function generateProfessionalPDF() {
         doc.text(`Дата: ${dateStr}`,           centerX, PDF.TITLE_Y_DATE,     { align: "center" });
 
         // --- Стр. 2: Скриншот схемы ---
-        doc.addPage();
-        doc.setFontSize(14);
-        doc.text("1. Схема компоновки оборудования", PDF.MARGIN, 20);
-        
-        const savedTransform = workspace.style.transform;
-        const savedZoom = window.zoomScale;
-        window.zoomScale = 1;
-        window.panX = 0;
-        window.panY = 0;
-        workspace.style.transform = `translate(0px, 0px) scale(1)`;
-        workspace.style.backgroundImage = 'none';
-        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
-        
-        let maxRight = 100, maxBottom = 100;
-        Array.from(workspace.children).forEach(el => {
-            if (el.style.display === 'none' || el.classList.contains('selection-box')) return;
-            const rect = el.getBoundingClientRect();
-            if (rect.right > maxRight) maxRight = rect.right;
-            if (rect.bottom > maxBottom) maxBottom = rect.bottom;
+        // --- Стр. 2: Скриншот схемы ---
+doc.addPage();
+doc.setFontSize(14);
+doc.text("1. Схема компоновки оборудования", PDF.MARGIN, 20);
+
+// 1. Сохраняем текущее состояние вида и временно сбрасываем трансформации
+const savedTransform     = workspace.style.transform;
+const savedZoom          = window.zoomScale;
+const savedPanX          = window.panX;
+const savedPanY          = window.panY;
+const savedWsWidth       = workspace.style.width;
+const savedWsHeight      = workspace.style.height;
+const savedViewportBg    = viewport.style.backgroundImage;
+const savedWsBg          = workspace.style.backgroundImage;
+const savedSvgWiresW     = svgWires.style.width;
+const savedSvgWiresH     = svgWires.style.height;
+const savedSvgCombsW     = svgCombs.style.width;
+const savedSvgCombsH     = svgCombs.style.height;
+const markersLayer       = document.getElementById('markers-layer');
+const savedMarkersW      = markersLayer ? markersLayer.style.width  : null;
+const savedMarkersH      = markersLayer ? markersLayer.style.height : null;
+const guideLayer         = document.getElementById('guide-layer');
+const savedGuideDisplay  = guideLayer ? guideLayer.style.display : null;
+
+window.zoomScale = 1;
+window.panX = 0;
+window.panY = 0;
+workspace.style.transform = 'translate(0px, 0px) scale(1)';
+workspace.style.backgroundImage = 'none';
+viewport.style.backgroundImage  = 'none';
+if (guideLayer) guideLayer.style.display = 'none';
+document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
+
+// 2. Замеряем габариты по ЛОГИЧЕСКИМ координатам (а не viewport-зависимым)
+let minLeft = Infinity, minTop = Infinity;
+let maxRight = -Infinity, maxBottom = -Infinity;
+
+document.querySelectorAll('.module-v2, .din-rail-v2').forEach(el => {
+    const left = parseFloat(el.style.left) || 0;
+    const top  = parseFloat(el.style.top)  || 0;
+    const w = el.offsetWidth  || 0;
+    const h = el.offsetHeight || 0;
+    if (w === 0 || h === 0) return;
+    if (left < minLeft)        minLeft = left;
+    if (top  < minTop)         minTop  = top;
+    if (left + w > maxRight)   maxRight = left + w;
+    if (top  + h > maxBottom)  maxBottom = top  + h;
+});
+
+// Учитываем точки изгиба и маркеры (могут вылезать за модули)
+if (window.wiringManagerV2?.wires) {
+    wiringManagerV2.wires.forEach(w => {
+        const pts = w.breakpoints?.points;
+        if (!pts) return;
+        pts.forEach(p => {
+            if (p.x < minLeft)   minLeft = p.x;
+            if (p.y < minTop)    minTop  = p.y;
+            if (p.x > maxRight)  maxRight = p.x;
+            if (p.y > maxBottom) maxBottom = p.y;
         });
-        
-        const wsRect = workspace.getBoundingClientRect();
-        const finalWidth  = maxRight  - wsRect.left + PDF.SCHEME_PADDING;
-        const finalHeight = maxBottom - wsRect.top  + PDF.SCHEME_PADDING;
-        
-        const canvasScheme = await html2canvas(workspace, {
-            scale: 2,
-            useCORS: true,
-            width: finalWidth,
-            height: finalHeight,
-            backgroundColor: '#ffffff'
-        });
-        
-        // Восстанавливаем рабочую область
-        workspace.style.backgroundImage = '';
-        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'block');
-        workspace.style.transform = savedTransform;
-        window.zoomScale = savedZoom;
-        
-        const imgScheme = canvasScheme.toDataURL('image/png');
-        const pdfW = PDF.CONTENT_W;
-        const imgH = (canvasScheme.height * pdfW) / canvasScheme.width;
-        const finalImgH = imgH > PDF.SCHEME_MAX_H ? PDF.SCHEME_MAX_H : imgH;
-        doc.addImage(imgScheme, 'PNG', PDF.MARGIN, 30, pdfW, finalImgH);
+    });
+}
+
+if (!isFinite(minLeft)) {
+    // Сцена пустая — делаем заглушку
+    minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
+}
+
+const PADDING = 40;
+const offsetX = -minLeft + PADDING;   // насколько сдвинуть всё, чтобы попасть в положительные координаты
+const offsetY = -minTop  + PADDING;
+const totalW  = (maxRight - minLeft) + PADDING * 2;
+const totalH  = (maxBottom - minTop) + PADDING * 2;
+
+// 3. Применяем сдвиг через transform (не двигаем элементы по одному)
+workspace.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(1)`;
+
+// 4. Расширяем workspace и SVG-слои, чтобы содержимое попало в bounding box
+workspace.style.width  = totalW + 'px';
+workspace.style.height = totalH + 'px';
+svgWires.style.width  = totalW + 'px';
+svgWires.style.height = totalH + 'px';
+svgCombs.style.width  = totalW + 'px';
+svgCombs.style.height = totalH + 'px';
+if (markersLayer) {
+    markersLayer.style.width  = totalW + 'px';
+    markersLayer.style.height = totalH + 'px';
+}
+
+// Принудительный reflow, чтобы новые размеры применились перед скриншотом
+void workspace.offsetWidth;
+
+// 5. Делаем скриншот всей расширенной области
+const canvasScheme = await html2canvas(workspace, {
+    scale: 2,
+    useCORS: true,
+    width:  totalW,
+    height: totalH,
+    windowWidth:  totalW,
+    windowHeight: totalH,
+    backgroundColor: '#ffffff',
+    scrollX: 0,
+    scrollY: 0,
+});
+
+// 6. Восстанавливаем всё как было
+workspace.style.transform       = savedTransform;
+workspace.style.width           = savedWsWidth;
+workspace.style.height          = savedWsHeight;
+workspace.style.backgroundImage = savedWsBg;
+viewport.style.backgroundImage  = savedViewportBg;
+svgWires.style.width  = savedSvgWiresW;
+svgWires.style.height = savedSvgWiresH;
+svgCombs.style.width  = savedSvgCombsW;
+svgCombs.style.height = savedSvgCombsH;
+if (markersLayer) {
+    markersLayer.style.width  = savedMarkersW;
+    markersLayer.style.height = savedMarkersH;
+}
+if (guideLayer) guideLayer.style.display = savedGuideDisplay;
+window.zoomScale = savedZoom;
+window.panX      = savedPanX;
+window.panY      = savedPanY;
+document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
+updateWorkspaceTransform();
+
+// 7. Вписываем картинку в страницу PDF (с сохранением пропорций)
+const availW = PDF.CONTENT_W;
+const availH = PDF.PAGE_H - 30 - PDF.MARGIN; // от заголовка до низа страницы
+const ratio  = canvasScheme.width / canvasScheme.height;
+let imgW = availW;
+let imgH = imgW / ratio;
+if (imgH > availH) {
+    imgH = availH;
+    imgW = imgH * ratio;
+}
+const imgX = PDF.MARGIN + (availW - imgW) / 2; // центрируем по горизонтали
+const imgScheme = canvasScheme.toDataURL('image/png');
+doc.addImage(imgScheme, 'PNG', imgX, 30, imgW, imgH);
 
         // --- Стр. 3: Спецификация ---
         doc.addPage();
