@@ -9640,7 +9640,7 @@ doc.addPage();
 doc.setFontSize(14);
 doc.text("1. Схема компоновки оборудования", PDF.MARGIN, 20);
 
-// 1. Сохраняем текущее состояние вида и временно сбрасываем трансформации
+// 1. Сохраняем состояние
 const savedTransform     = workspace.style.transform;
 const savedZoom          = window.zoomScale;
 const savedPanX          = window.panX;
@@ -9659,16 +9659,17 @@ const savedMarkersH      = markersLayer ? markersLayer.style.height : null;
 const guideLayer         = document.getElementById('guide-layer');
 const savedGuideDisplay  = guideLayer ? guideLayer.style.display : null;
 
+// 2. Сбрасываем zoom/pan и фоны (фон ловит html2canvas как часть рендера)
 window.zoomScale = 1;
 window.panX = 0;
 window.panY = 0;
-workspace.style.transform = 'translate(0px, 0px) scale(1)';
+workspace.style.transform       = 'translate(0px, 0px) scale(1)';
 workspace.style.backgroundImage = 'none';
 viewport.style.backgroundImage  = 'none';
 if (guideLayer) guideLayer.style.display = 'none';
 document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
 
-// 2. Замеряем габариты по ЛОГИЧЕСКИМ координатам (а не viewport-зависимым)
+// 3. Замер по логическим координатам
 let minLeft = Infinity, minTop = Infinity;
 let maxRight = -Infinity, maxBottom = -Infinity;
 
@@ -9684,14 +9685,14 @@ document.querySelectorAll('.module-v2, .din-rail-v2').forEach(el => {
     if (top  + h > maxBottom)  maxBottom = top  + h;
 });
 
-// Учитываем точки изгиба и маркеры (могут вылезать за модули)
+// Точки проводов
 if (window.wiringManagerV2?.wires) {
     wiringManagerV2.wires.forEach(w => {
         const pts = w.breakpoints?.points;
         if (!pts) return;
         pts.forEach(p => {
-            if (p.x < minLeft)   minLeft = p.x;
-            if (p.y < minTop)    minTop  = p.y;
+            if (p.x < minLeft)   minLeft  = p.x;
+            if (p.y < minTop)    minTop   = p.y;
             if (p.x > maxRight)  maxRight = p.x;
             if (p.y > maxBottom) maxBottom = p.y;
         });
@@ -9699,48 +9700,51 @@ if (window.wiringManagerV2?.wires) {
 }
 
 if (!isFinite(minLeft)) {
-    // Сцена пустая — делаем заглушку
     minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
 }
 
 const PADDING = 40;
-const offsetX = -minLeft + PADDING;   // насколько сдвинуть всё, чтобы попасть в положительные координаты
-const offsetY = -minTop  + PADDING;
-const totalW  = (maxRight - minLeft) + PADDING * 2;
-const totalH  = (maxBottom - minTop) + PADDING * 2;
+const captureX = minLeft  - PADDING;   // может быть отрицательным
+const captureY = minTop   - PADDING;
+const captureW = (maxRight  - minLeft) + PADDING * 2;
+const captureH = (maxBottom - minTop)  + PADDING * 2;
 
-// 3. Применяем сдвиг через transform (не двигаем элементы по одному)
-workspace.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(1)`;
-
-// 4. Расширяем workspace и SVG-слои, чтобы содержимое попало в bounding box
-workspace.style.width  = totalW + 'px';
-workspace.style.height = totalH + 'px';
-svgWires.style.width  = totalW + 'px';
-svgWires.style.height = totalH + 'px';
-svgCombs.style.width  = totalW + 'px';
-svgCombs.style.height = totalH + 'px';
+// 4. Расширяем workspace и SVG-слои, чтобы содержимое не клипалось
+//    (если minLeft/minTop отрицательные — нужны и отрицательные смещения).
+//    Здесь главное, чтобы у самого workspace overflow:visible (он уже такой).
+const expandedW = Math.max(captureX + captureW, parseFloat(savedWsWidth)  || 0);
+const expandedH = Math.max(captureY + captureH, parseFloat(savedWsHeight) || 0);
+workspace.style.width  = expandedW + 'px';
+workspace.style.height = expandedH + 'px';
+svgWires.style.width  = expandedW + 'px';
+svgWires.style.height = expandedH + 'px';
+svgCombs.style.width  = expandedW + 'px';
+svgCombs.style.height = expandedH + 'px';
 if (markersLayer) {
-    markersLayer.style.width  = totalW + 'px';
-    markersLayer.style.height = totalH + 'px';
+    markersLayer.style.width  = expandedW + 'px';
+    markersLayer.style.height = expandedH + 'px';
 }
 
-// Принудительный reflow, чтобы новые размеры применились перед скриншотом
-void workspace.offsetWidth;
+void workspace.offsetWidth; // reflow
 
-// 5. Делаем скриншот всей расширенной области
+// 5. Захват региона html2canvas с явными x/y/width/height.
+//    x/y могут быть отрицательными — тогда html2canvas корректно захватит
+//    содержимое слева/сверху от origin элемента.
 const canvasScheme = await html2canvas(workspace, {
     scale: 2,
     useCORS: true,
-    width:  totalW,
-    height: totalH,
-    windowWidth:  totalW,
-    windowHeight: totalH,
     backgroundColor: '#ffffff',
+    x: captureX,
+    y: captureY,
+    width:  captureW,
+    height: captureH,
+    windowWidth:  Math.max(captureW, document.documentElement.clientWidth),
+    windowHeight: Math.max(captureH, document.documentElement.clientHeight),
     scrollX: 0,
     scrollY: 0,
 });
 
-// 6. Восстанавливаем всё как было
+// 6. Восстановление
 workspace.style.transform       = savedTransform;
 workspace.style.width           = savedWsWidth;
 workspace.style.height          = savedWsHeight;
@@ -9761,9 +9765,9 @@ window.panY      = savedPanY;
 document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
 updateWorkspaceTransform();
 
-// 7. Вписываем картинку в страницу PDF (с сохранением пропорций)
+// 7. Вписываем в страницу PDF с сохранением пропорций
 const availW = PDF.CONTENT_W;
-const availH = PDF.PAGE_H - 30 - PDF.MARGIN; // от заголовка до низа страницы
+const availH = PDF.PAGE_H - 30 - PDF.MARGIN;
 const ratio  = canvasScheme.width / canvasScheme.height;
 let imgW = availW;
 let imgH = imgW / ratio;
@@ -9771,7 +9775,7 @@ if (imgH > availH) {
     imgH = availH;
     imgW = imgH * ratio;
 }
-const imgX = PDF.MARGIN + (availW - imgW) / 2; // центрируем по горизонтали
+const imgX = PDF.MARGIN + (availW - imgW) / 2;
 const imgScheme = canvasScheme.toDataURL('image/png');
 doc.addImage(imgScheme, 'PNG', imgX, 30, imgW, imgH);
 
