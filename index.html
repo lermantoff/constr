@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.8</title>
+    <title>Конструктор Щита v4.13.5</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9635,12 +9635,12 @@ async function generateProfessionalPDF() {
         doc.text(`Дата: ${dateStr}`,           centerX, PDF.TITLE_Y_DATE,     { align: "center" });
 
         // --- Стр. 2: Скриншот схемы ---
-// --- Стр. 2: Скриншот схемы ---
+        // --- Стр. 2: Скриншот схемы ---
 doc.addPage();
 doc.setFontSize(14);
 doc.text("1. Схема компоновки оборудования", PDF.MARGIN, 20);
 
-// 1. Сохраняем состояние
+// 1. Сохраняем текущее состояние вида и временно сбрасываем трансформации
 const savedTransform     = workspace.style.transform;
 const savedZoom          = window.zoomScale;
 const savedPanX          = window.panX;
@@ -9659,66 +9659,39 @@ const savedMarkersH      = markersLayer ? markersLayer.style.height : null;
 const guideLayer         = document.getElementById('guide-layer');
 const savedGuideDisplay  = guideLayer ? guideLayer.style.display : null;
 
-// 2. Сбрасываем zoom/pan и фоны (фон ловит html2canvas как часть рендера)
 window.zoomScale = 1;
 window.panX = 0;
 window.panY = 0;
-workspace.style.transform       = 'translate(0px, 0px) scale(1)';
+workspace.style.transform = 'translate(0px, 0px) scale(1)';
 workspace.style.backgroundImage = 'none';
 viewport.style.backgroundImage  = 'none';
 if (guideLayer) guideLayer.style.display = 'none';
 document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
 
-// 3. Замер по логическим координатам
+// 2. Замеряем габариты по ЛОГИЧЕСКИМ координатам (а не viewport-зависимым)
 let minLeft = Infinity, minTop = Infinity;
 let maxRight = -Infinity, maxBottom = -Infinity;
 
-// 3a. Модули и DIN-рейки
 document.querySelectorAll('.module-v2, .din-rail-v2').forEach(el => {
     const left = parseFloat(el.style.left) || 0;
     const top  = parseFloat(el.style.top)  || 0;
     const w = el.offsetWidth  || 0;
     const h = el.offsetHeight || 0;
     if (w === 0 || h === 0) return;
-    if (left < minLeft)        minLeft   = left;
-    if (top  < minTop)         minTop    = top;
-    if (left + w > maxRight)   maxRight  = left + w;
+    if (left < minLeft)        minLeft = left;
+    if (top  < minTop)         minTop  = top;
+    if (left + w > maxRight)   maxRight = left + w;
     if (top  + h > maxBottom)  maxBottom = top  + h;
 });
 
-// 3b. Реальные границы всего SVG-контента (провода, гребёнки, маркеры)
-//    getBBox() возвращает координаты в пользовательской системе SVG —
-//    это именно те координаты, в которых живут провода (совпадают с workspace).
-const measureSvgContent = (svg) => {
-    if (!svg) return;
-    // Берём все графические потомки
-    const nodes = svg.querySelectorAll('path, line, polyline, polygon, rect, circle, ellipse, g, text');
-    nodes.forEach(node => {
-        try {
-            const bb = node.getBBox();
-            if (!bb || (bb.width === 0 && bb.height === 0)) return;
-            if (bb.x < minLeft)                minLeft   = bb.x;
-            if (bb.y < minTop)                 minTop    = bb.y;
-            if (bb.x + bb.width  > maxRight)   maxRight  = bb.x + bb.width;
-            if (bb.y + bb.height > maxBottom)  maxBottom = bb.y + bb.height;
-        } catch (e) { /* getBBox может падать на скрытых нодах — игнор */ }
-    });
-};
-
-measureSvgContent(svgWires);
-measureSvgContent(svgCombs);
-if (markersLayer && markersLayer.tagName.toLowerCase() === 'svg') {
-    measureSvgContent(markersLayer);
-}
-
-// 3c. Точки изломов (на всякий случай, если getBBox что-то упустил)
+// Учитываем точки изгиба и маркеры (могут вылезать за модули)
 if (window.wiringManagerV2?.wires) {
     wiringManagerV2.wires.forEach(w => {
         const pts = w.breakpoints?.points;
         if (!pts) return;
         pts.forEach(p => {
-            if (p.x < minLeft)   minLeft  = p.x;
-            if (p.y < minTop)    minTop   = p.y;
+            if (p.x < minLeft)   minLeft = p.x;
+            if (p.y < minTop)    minTop  = p.y;
             if (p.x > maxRight)  maxRight = p.x;
             if (p.y > maxBottom) maxBottom = p.y;
         });
@@ -9726,102 +9699,48 @@ if (window.wiringManagerV2?.wires) {
 }
 
 if (!isFinite(minLeft)) {
+    // Сцена пустая — делаем заглушку
     minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
 }
 
 const PADDING = 40;
-const captureX = minLeft  - PADDING;   // может быть отрицательным
-const captureY = minTop   - PADDING;
-const captureW = (maxRight  - minLeft) + PADDING * 2;
-const captureH = (maxBottom - minTop)  + PADDING * 2;
+const offsetX = -minLeft + PADDING;   // насколько сдвинуть всё, чтобы попасть в положительные координаты
+const offsetY = -minTop  + PADDING;
+const totalW  = (maxRight - minLeft) + PADDING * 2;
+const totalH  = (maxBottom - minTop) + PADDING * 2;
 
-// 4. Расширяем workspace и SVG-слои
-workspace.style.transformOrigin = '0 0';
-workspace.style.transform = `translate(${-captureX}px, ${-captureY}px) scale(1)`;
+// 3. Применяем сдвиг через transform (не двигаем элементы по одному)
+workspace.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(1)`;
 
-// Размер workspace = размер capture-региона
-workspace.style.width  = captureW + 'px';
-workspace.style.height = captureH + 'px';
-
-// SVG-слои: меняем И стили, И атрибуты width/height (они приоритетнее!)
-const expandSvg = (svg) => {
-    if (!svg) return null;
-    const saved = {
-        attrW: svg.getAttribute('width'),
-        attrH: svg.getAttribute('height'),
-        attrViewBox: svg.getAttribute('viewBox'),
-        styleOverflow: svg.style.overflow,
-        styleW: svg.style.width,
-        styleH: svg.style.height,
-    };
-    svg.setAttribute('width',  captureW);
-    svg.setAttribute('height', captureH);
-    if (saved.attrViewBox) {
-        svg.setAttribute('viewBox', `0 0 ${captureW} ${captureH}`);
-    }
-    svg.style.overflow = 'visible';
-    svg.style.width  = captureW + 'px';
-    svg.style.height = captureH + 'px';
-    return saved;
-};
-
-const savedSvgWires   = expandSvg(svgWires);
-const savedSvgCombs   = expandSvg(svgCombs);
-const savedMarkersSvg = markersLayer && markersLayer.tagName.toLowerCase() === 'svg'
-    ? expandSvg(markersLayer)
-    : null;
-
-if (markersLayer && !savedMarkersSvg) {
-    markersLayer.style.width  = expandedW + 'px';
-    markersLayer.style.height = expandedH + 'px';
-    markersLayer.style.overflow = 'visible';
+// 4. Расширяем workspace и SVG-слои, чтобы содержимое попало в bounding box
+workspace.style.width  = totalW + 'px';
+workspace.style.height = totalH + 'px';
+svgWires.style.width  = totalW + 'px';
+svgWires.style.height = totalH + 'px';
+svgCombs.style.width  = totalW + 'px';
+svgCombs.style.height = totalH + 'px';
+if (markersLayer) {
+    markersLayer.style.width  = totalW + 'px';
+    markersLayer.style.height = totalH + 'px';
 }
 
-// КРИТИЧНО: убираем overflow:hidden у предков workspace,
-// иначе html2canvas обрежет содержимое по ним.
-const savedViewportOverflow = viewport.style.overflow;
-const savedViewportW        = viewport.style.width;   // ← СНАЧАЛА сохраняем
-const savedViewportH        = viewport.style.height;
+// Принудительный reflow, чтобы новые размеры применились перед скриншотом
+void workspace.offsetWidth;
 
-viewport.style.overflow = 'visible';
-viewport.style.width    = expandedW + 'px';
-viewport.style.height   = expandedH + 'px';
-
-// Снимаем overflow у body и html
-const savedBodyOverflow = document.body.style.overflow;
-const savedHtmlOverflow = document.documentElement.style.overflow;
-document.body.style.overflow = 'visible';
-document.documentElement.style.overflow = 'visible';
-
-void workspace.offsetWidth; // reflow
-
-        window.__capDebug = { captureX, captureY, captureW, captureH, minLeft, minTop, maxRight, maxBottom, expandedW, expandedH };
-console.log('DEBUG capture:', window.__capDebug);
-
-// Проверим: совпадают ли реальные SVG-границы с замером
-const wbb = svgWires?.getBBox?.();
-const cbb = svgCombs?.getBBox?.();
-console.log('svgWires BBox:', wbb);
-console.log('svgCombs BBox:', cbb);
-
-// 5. Захват региона html2canvas с явными x/y/width/height.
-//    x/y могут быть отрицательными — тогда html2canvas корректно захватит
-//    содержимое слева/сверху от origin элемента.
+// 5. Делаем скриншот всей расширенной области
 const canvasScheme = await html2canvas(workspace, {
     scale: 2,
     useCORS: true,
+    width:  totalW,
+    height: totalH,
+    windowWidth:  totalW,
+    windowHeight: totalH,
     backgroundColor: '#ffffff',
-    x: 0,
-    y: 0,
-    width:  captureW,
-    height: captureH,
-    windowWidth:  Math.max(captureW, document.documentElement.clientWidth),
-    windowHeight: Math.max(captureH, document.documentElement.clientHeight),
     scrollX: 0,
     scrollY: 0,
 });
 
-// 6. Восстановление
+// 6. Восстанавливаем всё как было
 workspace.style.transform       = savedTransform;
 workspace.style.width           = savedWsWidth;
 workspace.style.height          = savedWsHeight;
@@ -9841,29 +9760,10 @@ window.panX      = savedPanX;
 window.panY      = savedPanY;
 document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
 updateWorkspaceTransform();
-// Восстановление SVG-атрибутов
-const restoreSvg = (svg, saved) => {
-    if (!svg || !saved) return;
-    if (saved.attrW    !== null) svg.setAttribute('width',  saved.attrW);    else svg.removeAttribute('width');
-    if (saved.attrH    !== null) svg.setAttribute('height', saved.attrH);    else svg.removeAttribute('height');
-    if (saved.attrViewBox !== null) svg.setAttribute('viewBox', saved.attrViewBox); else svg.removeAttribute('viewBox');
-    svg.style.overflow = saved.styleOverflow;
-    svg.style.width    = saved.styleW;   // ← добавили
-    svg.style.height   = saved.styleH;   // ← добавили
-};
-restoreSvg(svgWires,    savedSvgWires);
-restoreSvg(svgCombs,    savedSvgCombs);
-restoreSvg(markersLayer, savedMarkersSvg);
 
-viewport.style.overflow = savedViewportOverflow;
-document.body.style.overflow = savedBodyOverflow;
-document.documentElement.style.overflow = savedHtmlOverflow;
-viewport.style.width  = savedViewportW;
-viewport.style.height = savedViewportH;
-
-// 7. Вписываем в страницу PDF с сохранением пропорций
+// 7. Вписываем картинку в страницу PDF (с сохранением пропорций)
 const availW = PDF.CONTENT_W;
-const availH = PDF.PAGE_H - 30 - PDF.MARGIN;
+const availH = PDF.PAGE_H - 30 - PDF.MARGIN; // от заголовка до низа страницы
 const ratio  = canvasScheme.width / canvasScheme.height;
 let imgW = availW;
 let imgH = imgW / ratio;
@@ -9871,7 +9771,7 @@ if (imgH > availH) {
     imgH = availH;
     imgW = imgH * ratio;
 }
-const imgX = PDF.MARGIN + (availW - imgW) / 2;
+const imgX = PDF.MARGIN + (availW - imgW) / 2; // центрируем по горизонтали
 const imgScheme = canvasScheme.toDataURL('image/png');
 doc.addImage(imgScheme, 'PNG', imgX, 30, imgW, imgH);
 
