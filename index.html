@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.8</title>
+    <title>Конструктор Щита v4.13.5</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9635,7 +9635,7 @@ async function generateProfessionalPDF() {
         doc.text(`Дата: ${dateStr}`,           centerX, PDF.TITLE_Y_DATE,     { align: "center" });
 
         // --- Стр. 2: Скриншот схемы ---
-        // --- Стр. 2: Скриншот схемы ---
+// --- Стр. 2: Скриншот схемы ---
 doc.addPage();
 doc.setFontSize(14);
 doc.text("1. Схема компоновки оборудования", PDF.MARGIN, 20);
@@ -9728,6 +9728,12 @@ if (window.wiringManagerV2?.wires) {
 if (!isFinite(minLeft)) {
     minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
 }
+
+const PADDING = 40;
+const captureX = minLeft  - PADDING;   // может быть отрицательным
+const captureY = minTop   - PADDING;
+const captureW = (maxRight  - minLeft) + PADDING * 2;
+const captureH = (maxBottom - minTop)  + PADDING * 2;
 
 // 4. Расширяем workspace и SVG-слои
 const expandedW = Math.max(captureX + captureW, parseFloat(savedWsWidth)  || 0);
