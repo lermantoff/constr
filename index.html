@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.8</title>
+    <title>Конструктор Щита v4.13.9</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9606,6 +9606,15 @@ async function generateProfessionalPDF() {
     confirmBtn.innerText = 'Генерация...';
     confirmBtn.disabled = true;
 
+    // Объявляем переменные восстановления ВНЕ try, чтобы finally их видел
+    let movedElements = [];
+    let savedSvgState = [];
+    let saved = null;
+    let savedGuideDisplay = null;
+    const markersLayer = document.getElementById('markers-layer');
+    const guideLayer   = document.getElementById('guide-layer');
+    let needsRestore = false;
+
     try {
         const projName = Utils.getEl('pdfProjectName').value || 'Проект электрощита';
         const customer = Utils.getEl('pdfCustomer').value     || 'Не указан';
@@ -9635,194 +9644,154 @@ async function generateProfessionalPDF() {
         doc.text(`Дата: ${dateStr}`,           centerX, PDF.TITLE_Y_DATE,     { align: "center" });
 
         // --- Стр. 2: Скриншот схемы ---
-        // --- Стр. 2: Скриншот схемы ---
-doc.addPage();
-doc.setFontSize(14);
-doc.text("1. Схема компоновки оборудования", PDF.MARGIN, 20);
+        doc.addPage();
+        doc.setFontSize(14);
+        doc.text("1. Схема компоновки оборудования", PDF.MARGIN, 20);
 
-// 1. Сохраняем исходное состояние
-const saved = {
-    wsTransform: workspace.style.transform,
-    wsWidth:     workspace.style.width,
-    wsHeight:    workspace.style.height,
-    wsBg:        workspace.style.backgroundImage,
-    
-    zoom: window.zoomScale,
-    panX: window.panX,
-    panY: window.panY,
-    
-    vpBg:       viewport.style.backgroundImage,
-    vpOverflow: viewport.style.overflow,
-    vpWidth:    viewport.style.width,
-    vpHeight:   viewport.style.height,
-    
-    bodyOverflow: document.body.style.overflow,
-    htmlOverflow: document.documentElement.style.overflow,
-};
+        // 1. Сохраняем исходное состояние
+        saved = {
+            wsTransform: workspace.style.transform,
+            wsWidth:     workspace.style.width,
+            wsHeight:    workspace.style.height,
+            wsBg:        workspace.style.backgroundImage,
+            
+            zoom: window.zoomScale,
+            panX: window.panX,
+            panY: window.panY,
+            
+            vpBg:       viewport.style.backgroundImage,
+            vpOverflow: viewport.style.overflow,
+            vpWidth:    viewport.style.width,
+            vpHeight:   viewport.style.height,
+            
+            bodyOverflow: document.body.style.overflow,
+            htmlOverflow: document.documentElement.style.overflow,
+        };
+        savedGuideDisplay = guideLayer ? guideLayer.style.display : null;
+        needsRestore = true;
 
-const markersLayer = document.getElementById('markers-layer');
-const guideLayer   = document.getElementById('guide-layer');
-const savedGuideDisplay = guideLayer ? guideLayer.style.display : null;
+        // 2. Сбрасываем zoom/pan/transform/фоны
+        window.zoomScale = 1;
+        window.panX = 0;
+        window.panY = 0;
+        workspace.style.transform = 'none';
+        workspace.style.backgroundImage = 'none';
+        viewport.style.backgroundImage  = 'none';
+        if (guideLayer) guideLayer.style.display = 'none';
+        document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
 
-// 2. Сбрасываем zoom/pan/transform/фоны
-window.zoomScale = 1;
-window.panX = 0;
-window.panY = 0;
-workspace.style.transform = 'none';
-workspace.style.backgroundImage = 'none';
-viewport.style.backgroundImage  = 'none';
-if (guideLayer) guideLayer.style.display = 'none';
-document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
+        void workspace.offsetWidth;
 
-void workspace.offsetWidth;
+        // 3. Замеряем активную область В ИСХОДНЫХ координатах
+        let minLeft = Infinity, minTop = Infinity;
+        let maxRight = -Infinity, maxBottom = -Infinity;
 
-// 3. Замеряем активную область В ИСХОДНЫХ координатах
-let minLeft = Infinity, minTop = Infinity;
-let maxRight = -Infinity, maxBottom = -Infinity;
-
-// Модули и рейки на верхнем уровне workspace
-document.querySelectorAll('#workspace > .module-v2, #workspace > .din-rail-v2').forEach(el => {
-    const left = parseFloat(el.style.left) || 0;
-    const top  = parseFloat(el.style.top)  || 0;
-    const w = el.offsetWidth  || 0;
-    const h = el.offsetHeight || 0;
-    if (w === 0 || h === 0) return;
-    minLeft = Math.min(minLeft, left);
-    minTop  = Math.min(minTop, top);
-    maxRight  = Math.max(maxRight, left + w);
-    maxBottom = Math.max(maxBottom, top + h);
-});
-
-// Точки изломов проводов (в логических координатах workspace)
-if (window.wiringManagerV2?.wires) {
-    wiringManagerV2.wires.forEach(w => {
-        const pts = w.breakpoints?.points;
-        if (!pts) return;
-        pts.forEach(p => {
-            minLeft = Math.min(minLeft, p.x);
-            minTop  = Math.min(minTop, p.y);
-            maxRight  = Math.max(maxRight, p.x);
-            maxBottom = Math.max(maxBottom, p.y);
+        document.querySelectorAll('#workspace > .module-v2, #workspace > .din-rail-v2').forEach(el => {
+            const left = parseFloat(el.style.left) || 0;
+            const top  = parseFloat(el.style.top)  || 0;
+            const w = el.offsetWidth  || 0;
+            const h = el.offsetHeight || 0;
+            if (w === 0 || h === 0) return;
+            minLeft = Math.min(minLeft, left);
+            minTop  = Math.min(minTop, top);
+            maxRight  = Math.max(maxRight, left + w);
+            maxBottom = Math.max(maxBottom, top + h);
         });
-    });
-}
 
-if (!isFinite(minLeft)) {
-    minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
-}
+        if (window.wiringManagerV2?.wires) {
+            wiringManagerV2.wires.forEach(w => {
+                const pts = w.breakpoints?.points;
+                if (!pts) return;
+                pts.forEach(p => {
+                    minLeft = Math.min(minLeft, p.x);
+                    minTop  = Math.min(minTop, p.y);
+                    maxRight  = Math.max(maxRight, p.x);
+                    maxBottom = Math.max(maxBottom, p.y);
+                });
+            });
+        }
 
-const PADDING = 40;
-const shiftX = -minLeft + PADDING;   // на сколько прибавить ко всем left/x
-const shiftY = -minTop  + PADDING;
-const contentW = (maxRight  - minLeft) + PADDING * 2;
-const contentH = (maxBottom - minTop)  + PADDING * 2;
+        if (!isFinite(minLeft)) {
+            minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
+        }
 
-// 4. ФVG так, чтобы content попал в видимую область
-//    
-//    Используем transform-атрибут на каждом SVG (НЕ CSS-transform — тот html2canvas путает)
+        const PADDING = 40;
+        const shiftX = -minLeft + PADDING;
+        const shiftY = -minTop  + PADDING;
+        const contentW = (maxRight  - minLeft) + PADDING * 2;
+        const contentH = (maxBottom - minTop)  + PADDING * 2;
 
-const svgsToShift = [svgWires, svgCombs, markersLayer].filter(s => s);
-const savedSvgState = svgsToShift.map(svg => ({
-    el: svg,
-    width:   svg.getAttribute('width'),
-    height:  svg.getAttribute('height'),
-    viewBox: svg.getAttribute('viewBox'),
-    styleW:  svg.style.width,
-    styleH:  svg.style.height,
-    styleOverflow: svg.style.overflow,
-}));
+        // 4. ФИЗИЧЕСКИ сдвигаем модули и рейки
+        document.querySelectorAll('#workspace > .module-v2, #workspace > .din-rail-v2').forEach(el => {
+            const origLeft = el.style.left;
+            const origTop  = el.style.top;
+            movedElements.push({ el, origLeft, origTop });
+            
+            const newLeft = (parseFloat(origLeft) || 0) + shiftX;
+            const newTop  = (parseFloat(origTop)  || 0) + shiftY;
+            el.style.left = newLeft + 'px';
+            el.style.top  = newTop  + 'px';
+        });
 
-svgsToShift.forEach(svg => {
-    svg.setAttribute('width',  contentW);
-    svg.setAttribute('height', contentH);
-    // viewBox с отрицательным offset = "сдвиг" содержимого
-    // Если содержимое имеет координату X в [minLeft, maxRight],
-    // то viewBox = "minLeft-PADDING minTop-PADDING contentW contentH"
-    // означает: показывать область от (minLeft-PADDING) до (maxRight+PADDING)
-    svg.setAttribute('viewBox', `${minLeft - PADDING} ${minTop - PADDING} ${contentW} ${contentH}`);
-    svg.style.overflow = 'visible';
-    svg.style.width  = contentW + 'px';
-    svg.style.height = contentH + 'px';
-});
+        // 5. SVG: меняем width/height/viewBox
+        const svgsToShift = [svgWires, svgCombs, markersLayer].filter(s => s);
+        savedSvgState = svgsToShift.map(svg => ({
+            el: svg,
+            width:   svg.getAttribute('width'),
+            height:  svg.getAttribute('height'),
+            viewBox: svg.getAttribute('viewBox'),
+            styleW:  svg.style.width,
+            styleH:  svg.style.height,
+            styleOverflow: svg.style.overflow,
+        }));
 
-// 6. Растягиваем workspace на activeArea
-workspace.style.width  = contentW + 'px';
-workspace.style.height = contentH + 'px';
+        svgsToShift.forEach(svg => {
+            svg.setAttribute('width',  contentW);
+            svg.setAttribute('height', contentH);
+            svg.setAttribute('viewBox', `${minLeft - PADDING} ${minTop - PADDING} ${contentW} ${contentH}`);
+            svg.style.overflow = 'visible';
+            svg.style.width  = contentW + 'px';
+            svg.style.height = contentH + 'px';
+        });
 
-// Снимаем overflow с предков
-viewport.style.overflow = 'visible';
-viewport.style.width  = contentW + 'px';
-viewport.style.height = contentH + 'px';
-document.body.style.overflow = 'visible';
-document.documentElement.style.overflow = 'visible';
+        // 6. Растягиваем workspace
+        workspace.style.width  = contentW + 'px';
+        workspace.style.height = contentH + 'px';
 
-void workspace.offsetWidth;
+        viewport.style.overflow = 'visible';
+        viewport.style.width  = contentW + 'px';
+        viewport.style.height = contentH + 'px';
+        document.body.style.overflow = 'visible';
+        document.documentElement.style.overflow = 'visible';
 
-// 7. Захват
-const canvasScheme = await html2canvas(workspace, {
-    scale: 2,
-    useCORS: true,
-    backgroundColor: '#ffffff',
-    width:  contentW,
-    height: contentH,
-    windowWidth:  Math.max(contentW, document.documentElement.clientWidth),
-    windowHeight: Math.max(contentH, document.documentElement.clientHeight),
-    scrollX: 0,
-    scrollY: 0,
-});
+        void workspace.offsetWidth;
 
-// 8. Восстановление координат модулей и реек
-movedElements.forEach(({ el, origLeft, origTop }) => {
-    el.style.left = origLeft;
-    el.style.top  = origTop;
-});
+        // 7. Захват
+        const canvasScheme = await html2canvas(workspace, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            width:  contentW,
+            height: contentH,
+            windowWidth:  Math.max(contentW, document.documentElement.clientWidth),
+            windowHeight: Math.max(contentH, document.documentElement.clientHeight),
+            scrollX: 0,
+            scrollY: 0,
+        });
 
-// Восстановление SVG
-savedSvgState.forEach(s => {
-    if (s.width !== null)   s.el.setAttribute('width',  s.width);   else s.el.removeAttribute('width');
-    if (s.height !== null)  s.el.setAttribute('height', s.height);  else s.el.removeAttribute('height');
-    if (s.viewBox !== null) s.el.setAttribute('viewBox', s.viewBox); else s.el.removeAttribute('viewBox');
-    s.el.style.width    = s.styleW;
-    s.el.style.height   = s.styleH;
-    s.el.style.overflow = s.styleOverflow;
-});
-
-// Восстановление workspace и viewport
-workspace.style.transform       = saved.wsTransform;
-workspace.style.width           = saved.wsWidth;
-workspace.style.height          = saved.wsHeight;
-workspace.style.backgroundImage = saved.wsBg;
-
-viewport.style.backgroundImage = saved.vpBg;
-viewport.style.overflow        = saved.vpOverflow;
-viewport.style.width           = saved.vpWidth;
-viewport.style.height          = saved.vpHeight;
-
-document.body.style.overflow            = saved.bodyOverflow;
-document.documentElement.style.overflow = saved.htmlOverflow;
-
-window.zoomScale = saved.zoom;
-window.panX      = saved.panX;
-window.panY      = saved.panY;
-
-if (guideLayer) guideLayer.style.display = savedGuideDisplay;
-document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
-
-updateWorkspaceTransform();
-
-// 9. Вписываем в страницу PDF
-const availW = PDF.CONTENT_W;
-const availH = PDF.PAGE_H - 30 - PDF.MARGIN;
-const ratio  = canvasScheme.width / canvasScheme.height;
-let imgW = availW;
-let imgH = imgW / ratio;
-if (imgH > availH) {
-    imgH = availH;
-    imgW = imgH * ratio;
-}
-const imgX = PDF.MARGIN + (availW - imgW) / 2;
-const imgScheme = canvasScheme.toDataURL('image/png');
-doc.addImage(imgScheme, 'PNG', imgX, 30, imgW, imgH);
+        // 8. Вписываем в страницу PDF
+        const availW = PDF.CONTENT_W;
+        const availH = PDF.PAGE_H - 30 - PDF.MARGIN;
+        const ratio  = canvasScheme.width / canvasScheme.height;
+        let imgW = availW;
+        let imgH = imgW / ratio;
+        if (imgH > availH) {
+            imgH = availH;
+            imgW = imgH * ratio;
+        }
+        const imgX = PDF.MARGIN + (availW - imgW) / 2;
+        const imgScheme = canvasScheme.toDataURL('image/png');
+        doc.addImage(imgScheme, 'PNG', imgX, 30, imgW, imgH);
 
         // --- Стр. 3: Спецификация ---
         doc.addPage();
@@ -9873,9 +9842,9 @@ doc.addImage(imgScheme, 'PNG', imgX, 30, imgW, imgH);
             const fromInfo = getTermInfo(w.from);
             const toInfo   = getTermInfo(w.to);
             const markerLabel = (w.markerNumber != null) ? `№${w.markerNumber}` : '—';
-const wireInfo = (w.mode === 'comb') 
-    ? `Гребенка ${markerLabel}` 
-    : `${w.thickness}мм² ${markerLabel}`;
+            const wireInfo = (w.mode === 'comb') 
+                ? `Гребенка ${markerLabel}` 
+                : `${w.thickness}мм² ${markerLabel}`;
             connectionsData.push([
                 `${fromInfo.name} [Контакт: ${fromInfo.tag}]`,
                 wireInfo,
@@ -9903,6 +9872,52 @@ const wireInfo = (w.mode === 'comb')
         console.error('Ошибка при создании PDF:', err);
         alert('Произошла ошибка при генерации документа. Подробности в консоли.');
     } finally {
+        // ВОССТАНОВЛЕНИЕ — выполняется ВСЕГДА, даже при ошибке
+        if (needsRestore) {
+            try {
+                // Восстановление координат модулей и реек
+                movedElements.forEach(({ el, origLeft, origTop }) => {
+                    el.style.left = origLeft;
+                    el.style.top  = origTop;
+                });
+
+                // Восстановление SVG
+                savedSvgState.forEach(s => {
+                    if (s.width !== null)   s.el.setAttribute('width',  s.width);   else s.el.removeAttribute('width');
+                    if (s.height !== null)  s.el.setAttribute('height', s.height);  else s.el.removeAttribute('height');
+                    if (s.viewBox !== null) s.el.setAttribute('viewBox', s.viewBox); else s.el.removeAttribute('viewBox');
+                    s.el.style.width    = s.styleW;
+                    s.el.style.height   = s.styleH;
+                    s.el.style.overflow = s.styleOverflow;
+                });
+
+                // Восстановление workspace и viewport
+                workspace.style.transform       = saved.wsTransform;
+                workspace.style.width           = saved.wsWidth;
+                workspace.style.height          = saved.wsHeight;
+                workspace.style.backgroundImage = saved.wsBg;
+
+                viewport.style.backgroundImage = saved.vpBg;
+                viewport.style.overflow        = saved.vpOverflow;
+                viewport.style.width           = saved.vpWidth;
+                viewport.style.height          = saved.vpHeight;
+
+                document.body.style.overflow            = saved.bodyOverflow;
+                document.documentElement.style.overflow = saved.htmlOverflow;
+
+                window.zoomScale = saved.zoom;
+                window.panX      = saved.panX;
+                window.panY      = saved.panY;
+
+                if (guideLayer) guideLayer.style.display = savedGuideDisplay;
+                document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
+
+                updateWorkspaceTransform();
+            } catch (restoreErr) {
+                console.error('Ошибка при восстановлении состояния после PDF:', restoreErr);
+            }
+        }
+
         confirmBtn.innerText = originalBtnText;
         confirmBtn.disabled = false;
     }
