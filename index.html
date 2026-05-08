@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.7</title>
+    <title>Конструктор Щита v4.13.8</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -9642,108 +9642,67 @@ doc.text("1. Схема компоновки оборудования", PDF.MARG
 
 // 1. Сохраняем исходное состояние
 const saved = {
-    wsTransform:    workspace.style.transform,
-    wsWidth:        workspace.style.width,
-    wsHeight:       workspace.style.height,
-    wsLeft:         workspace.style.left,
-    wsTop:          workspace.style.top,
-    wsPosition:     workspace.style.position,
-    wsBg:           workspace.style.backgroundImage,
+    wsTransform: workspace.style.transform,
+    wsWidth:     workspace.style.width,
+    wsHeight:    workspace.style.height,
+    wsBg:        workspace.style.backgroundImage,
     
     zoom: window.zoomScale,
     panX: window.panX,
     panY: window.panY,
     
-    vpBg:           viewport.style.backgroundImage,
-    vpOverflow:     viewport.style.overflow,
-    vpWidth:        viewport.style.width,
-    vpHeight:       viewport.style.height,
+    vpBg:       viewport.style.backgroundImage,
+    vpOverflow: viewport.style.overflow,
+    vpWidth:    viewport.style.width,
+    vpHeight:   viewport.style.height,
     
-    bodyOverflow:   document.body.style.overflow,
-    htmlOverflow:   document.documentElement.style.overflow,
+    bodyOverflow: document.body.style.overflow,
+    htmlOverflow: document.documentElement.style.overflow,
 };
 
 const markersLayer = document.getElementById('markers-layer');
 const guideLayer   = document.getElementById('guide-layer');
 const savedGuideDisplay = guideLayer ? guideLayer.style.display : null;
 
-// SVG-слои
-const savedSvgState = (svg) => svg ? ({
-    el: svg,
-    attrW: svg.getAttribute('width'),
-    attrH: svg.getAttribute('height'),
-    attrViewBox: svg.getAttribute('viewBox'),
-    styleOverflow: svg.style.overflow,
-    styleWidth: svg.style.width,
-    styleHeight: svg.style.height,
-}) : null;
-
-const savedWiresSvg = savedSvgState(svgWires);
-const savedCombsSvg = savedSvgState(svgCombs);
-const savedMarkSvg  = savedSvgState(markersLayer);
-
-// 2. Сбрасываем zoom/pan и фоны
+// 2. Сбрасываем zoom/pan/transform/фоны
 window.zoomScale = 1;
 window.panX = 0;
 window.panY = 0;
+workspace.style.transform = 'none';
 workspace.style.backgroundImage = 'none';
 viewport.style.backgroundImage  = 'none';
 if (guideLayer) guideLayer.style.display = 'none';
 document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
 
-// Обнуляем transform — пусть содержимое будет в своих логических координатах
-workspace.style.transform = 'none';
+void workspace.offsetWidth;
 
-void workspace.offsetWidth; // reflow
-
-// 3. Замер активной области (в логических координатах)
+// 3. Замеряем активную область В ИСХОДНЫХ координатах
 let minLeft = Infinity, minTop = Infinity;
 let maxRight = -Infinity, maxBottom = -Infinity;
 
-// 3a. Модули и рейки
-document.querySelectorAll('.module-v2, .din-rail-v2').forEach(el => {
+// Модули и рейки на верхнем уровне workspace
+document.querySelectorAll('#workspace > .module-v2, #workspace > .din-rail-v2').forEach(el => {
     const left = parseFloat(el.style.left) || 0;
     const top  = parseFloat(el.style.top)  || 0;
     const w = el.offsetWidth  || 0;
     const h = el.offsetHeight || 0;
     if (w === 0 || h === 0) return;
-    if (left < minLeft)        minLeft   = left;
-    if (top  < minTop)         minTop    = top;
-    if (left + w > maxRight)   maxRight  = left + w;
-    if (top  + h > maxBottom)  maxBottom = top  + h;
+    minLeft = Math.min(minLeft, left);
+    minTop  = Math.min(minTop, top);
+    maxRight  = Math.max(maxRight, left + w);
+    maxBottom = Math.max(maxBottom, top + h);
 });
 
-// 3b. SVG-содержимое (провода, маркеры)
-const measureSvgContent = (svg) => {
-    if (!svg) return;
-    const nodes = svg.querySelectorAll('path, line, polyline, polygon, rect, circle, ellipse, g, text');
-    nodes.forEach(node => {
-        try {
-            const bb = node.getBBox();
-            if (!bb || (bb.width === 0 && bb.height === 0)) return;
-            if (bb.x < minLeft)                minLeft   = bb.x;
-            if (bb.y < minTop)                 minTop    = bb.y;
-            if (bb.x + bb.width  > maxRight)   maxRight  = bb.x + bb.width;
-            if (bb.y + bb.height > maxBottom)  maxBottom = bb.y + bb.height;
-        } catch (e) { /* getBBox может падать на скрытых */ }
-    });
-};
-measureSvgContent(svgWires);
-measureSvgContent(svgCombs);
-if (markersLayer && markersLayer.tagName.toLowerCase() === 'svg') {
-    measureSvgContent(markersLayer);
-}
-
-// 3c. Точки изломов проводов
+// Точки изломов проводов (в логических координатах workspace)
 if (window.wiringManagerV2?.wires) {
     wiringManagerV2.wires.forEach(w => {
         const pts = w.breakpoints?.points;
         if (!pts) return;
         pts.forEach(p => {
-            if (p.x < minLeft)   minLeft   = p.x;
-            if (p.y < minTop)    minTop    = p.y;
-            if (p.x > maxRight)  maxRight  = p.x;
-            if (p.y > maxBottom) maxBottom = p.y;
+            minLeft = Math.min(minLeft, p.x);
+            minTop  = Math.min(minTop, p.y);
+            maxRight  = Math.max(maxRight, p.x);
+            maxBottom = Math.max(maxBottom, p.y);
         });
     });
 }
@@ -9753,39 +9712,42 @@ if (!isFinite(minLeft)) {
 }
 
 const PADDING = 40;
+const shiftX = -minLeft + PADDING;   // на сколько прибавить ко всем left/x
+const shiftY = -minTop  + PADDING;
 const contentW = (maxRight  - minLeft) + PADDING * 2;
 const contentH = (maxBottom - minTop)  + PADDING * 2;
-const shiftX   = -(minLeft - PADDING);  // на сколько сдвинуть содержимое, чтобы оно начиналось с 0
-const shiftY   = -(minTop  - PADDING);
 
-// 4. "Натягиваем" workspace на активную область
-//    - выводим из-под viewport (он мог обрезать)
-//    - размер = размер активной области
-//    - сдвигаем содержимое через transform так, чтобы оно начиналось с (0,0)
-workspace.style.position  = 'absolute';
-workspace.style.left      = '0px';
-workspace.style.top       = '0px';
-workspace.style.width     = contentW + 'px';
-workspace.style.height    = contentH + 'px';
-workspace.style.transform = `translate(${shiftX}px, ${shiftY}px)`;
+// 4. ФVG так, чтобы content попал в видимую область
+//    
+//    Используем transform-атрибут на каждом SVG (НЕ CSS-transform — тот html2canvas путает)
 
-// SVG-слои тоже растягиваем под workspace
-const expandSvg = (svg) => {
-    if (!svg) return;
+const svgsToShift = [svgWires, svgCombs, markersLayer].filter(s => s);
+const savedSvgState = svgsToShift.map(svg => ({
+    el: svg,
+    width:   svg.getAttribute('width'),
+    height:  svg.getAttribute('height'),
+    viewBox: svg.getAttribute('viewBox'),
+    styleW:  svg.style.width,
+    styleH:  svg.style.height,
+    styleOverflow: svg.style.overflow,
+}));
+
+svgsToShift.forEach(svg => {
     svg.setAttribute('width',  contentW);
     svg.setAttribute('height', contentH);
-    if (svg.getAttribute('viewBox')) {
-        svg.setAttribute('viewBox', `0 0 ${contentW} ${contentH}`);
-    }
+    // viewBox с отрицательным offset = "сдвиг" содержимого
+    // Если содержимое имеет координату X в [minLeft, maxRight],
+    // то viewBox = "minLeft-PADDING minTop-PADDING contentW contentH"
+    // означает: показывать область от (minLeft-PADDING) до (maxRight+PADDING)
+    svg.setAttribute('viewBox', `${minLeft - PADDING} ${minTop - PADDING} ${contentW} ${contentH}`);
     svg.style.overflow = 'visible';
     svg.style.width  = contentW + 'px';
     svg.style.height = contentH + 'px';
-};
-expandSvg(svgWires);
-expandSvg(svgCombs);
-if (markersLayer && markersLayer.tagName.toLowerCase() === 'svg') {
-    expandSvg(markersLayer);
-}
+});
+
+// 6. Растягиваем workspace на activeArea
+workspace.style.width  = contentW + 'px';
+workspace.style.height = contentH + 'px';
 
 // Снимаем overflow с предков
 viewport.style.overflow = 'visible';
@@ -9794,9 +9756,9 @@ viewport.style.height = contentH + 'px';
 document.body.style.overflow = 'visible';
 document.documentElement.style.overflow = 'visible';
 
-void workspace.offsetWidth; // reflow
+void workspace.offsetWidth;
 
-// 5. Захват workspace целиком — без x/y/width/height
+// 7. Захват
 const canvasScheme = await html2canvas(workspace, {
     scale: 2,
     useCORS: true,
@@ -9809,13 +9771,26 @@ const canvasScheme = await html2canvas(workspace, {
     scrollY: 0,
 });
 
-// 6. Восстановление
+// 8. Восстановление координат модулей и реек
+movedElements.forEach(({ el, origLeft, origTop }) => {
+    el.style.left = origLeft;
+    el.style.top  = origTop;
+});
+
+// Восстановление SVG
+savedSvgState.forEach(s => {
+    if (s.width !== null)   s.el.setAttribute('width',  s.width);   else s.el.removeAttribute('width');
+    if (s.height !== null)  s.el.setAttribute('height', s.height);  else s.el.removeAttribute('height');
+    if (s.viewBox !== null) s.el.setAttribute('viewBox', s.viewBox); else s.el.removeAttribute('viewBox');
+    s.el.style.width    = s.styleW;
+    s.el.style.height   = s.styleH;
+    s.el.style.overflow = s.styleOverflow;
+});
+
+// Восстановление workspace и viewport
 workspace.style.transform       = saved.wsTransform;
 workspace.style.width           = saved.wsWidth;
 workspace.style.height          = saved.wsHeight;
-workspace.style.left            = saved.wsLeft;
-workspace.style.top             = saved.wsTop;
-workspace.style.position        = saved.wsPosition;
 workspace.style.backgroundImage = saved.wsBg;
 
 viewport.style.backgroundImage = saved.vpBg;
@@ -9833,24 +9808,9 @@ window.panY      = saved.panY;
 if (guideLayer) guideLayer.style.display = savedGuideDisplay;
 document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
 
-// Восстановление SVG
-const restoreSvg = (s) => {
-    if (!s) return;
-    const { el, attrW, attrH, attrViewBox, styleOverflow, styleWidth, styleHeight } = s;
-    if (attrW !== null) el.setAttribute('width', attrW);   else el.removeAttribute('width');
-    if (attrH !== null) el.setAttribute('height', attrH);  else el.removeAttribute('height');
-    if (attrViewBox !== null) el.setAttribute('viewBox', attrViewBox);
-    el.style.overflow = styleOverflow;
-    el.style.width    = styleWidth;
-    el.style.height   = styleHeight;
-};
-restoreSvg(savedWiresSvg);
-restoreSvg(savedCombsSvg);
-restoreSvg(savedMarkSvg);
-
 updateWorkspaceTransform();
 
-// 7. Вписываем в страницу PDF с сохранением пропорций
+// 9. Вписываем в страницу PDF
 const availW = PDF.CONTENT_W;
 const availH = PDF.PAGE_H - 30 - PDF.MARGIN;
 const ratio  = canvasScheme.width / canvasScheme.height;
