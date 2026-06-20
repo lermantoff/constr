@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.10</title>
+    <title>Конструктор Щита v4.13.11</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -974,36 +974,7 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
             cursor: not-allowed;
         }
         
-        /* Тестовый блок для модулей v2 */
-        .test-modules-panel {
-            background: rgba(0,0,0,0.2);
-            padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 15px;
-            border: 1px solid #34495e;
-        }
-        
-        .test-modules-panel h3 {
-            margin: 0 0 10px 0;
-            color: #ecf0f1;
-            font-size: 0.9rem;
-        }
-        
-        .test-btn {
-            width: 100%;
-            padding: 8px;
-            margin-bottom: 5px;
-            background: #e67e22;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.8rem;
-        }
-        
-        .test-btn:hover {
-            background: #d35400;
-        }
+
         /* Индикатор автосохранения */
 #autosave-indicator {
     position: fixed;
@@ -1142,7 +1113,7 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
 <div class="modal-overlay" id="shieldGeneratorModal">
     <div class="modal-content" style="width: 720px; max-width: 92vw; max-height: 88vh; overflow-y: auto;">
         <h3 style="margin-top:0; color:#333; border-bottom: 1px solid #eee; padding-bottom: 10px;">
-            🏗️ Создать щит — генератор реек
+             Создать щит — генератор реек
         </h3>
 
         <div style="display: flex; flex-wrap: wrap; gap: 18px;">
@@ -1246,11 +1217,7 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
 <!-- ===== НОВЫЙ СЕЛЕКТОР МОДУЛЕЙ V2 ===== -->
             <div id="module-selector-container"></div>
             
-            <!-- Тестовая кнопка для создания модуля v2 -->
-            <div class="test-modules-panel">
-    <h3>Тест v2</h3>
-    <button class="test-btn" onclick="testCreateModuleV2()">Создать тестовый модуль</button>
-</div>
+
 
             <!-- Секция избранного -->
             <div class="favorites-section">
@@ -1829,7 +1796,11 @@ class DinRailManagerV2 {
 enableRailDragging(rail) {
     rail.style.cursor = 'grab';
     rail.addEventListener('mousedown', (e) => {
-        // Игнорируем, если клик по кнопке удаления или по модулю
+        // Только ЛКМ. СКМ — pan, ПКМ — контекстное меню, боковые — игнор.
+        if (e.button !== 0) return;
+        // Pan-режим (Ctrl+ЛКМ) не должен таскать рейку
+        if (e.ctrlKey || e.metaKey) return;
+        // Игнорируем клик по кнопке удаления или по модулю
         if (e.target.classList.contains('btn-delete-rail') || e.target.closest('.module-v2')) return;
         e.preventDefault();
         this.startDragRail(e, rail);
@@ -2171,8 +2142,12 @@ stopDragRail() {
 
     findNearestRail(moduleEl, clientX, clientY, highlight = true) {
     const rect = moduleEl.getBoundingClientRect();
+    // Экранные координаты курсора — для отбраковки кандидатов
     const moduleX = clientX !== undefined ? clientX : rect.left + rect.width / 2;
     const moduleY = clientY !== undefined ? clientY : rect.top + rect.height / 2;
+    // Логические координаты курсора — для расчёта позиции внутри рейки
+    const logicalMouse = getLogicalCoords(moduleX, moduleY);
+    // clientWidth — логическая ширина (не масштабируется zoom'ом)
     const moduleWidthPx = moduleEl.clientWidth;
     
     if (highlight) this.clearHighlight();
@@ -2188,30 +2163,34 @@ stopDragRail() {
         const verticalThreshold = moduleEl.clientHeight / 2 + APP_CONFIG.RAIL_VERTICAL_THRESHOLD;
         if (verticalDistance > verticalThreshold) return;
         
-        // === [Баг 2] Горизонтальная отбраковка: курсор должен быть над телом рейки ===
-        // Небольшой допуск, чтобы не "обрывалось" ровно на пикселе края.
+        // Горизонтальная отбраковка: курсор должен быть над телом рейки.
+        // Здесь сравниваем ЭКРАННОЕ с ЭКРАННЫМ — корректно при любом zoom.
         const HORIZONTAL_TOLERANCE = APP_CONFIG.RAIL_GROUP_TOLERANCE_X;
         if (moduleX < railRect.left - HORIZONTAL_TOLERANCE ||
             moduleX > railRect.right + HORIZONTAL_TOLERANCE) {
             return; // курсор сбоку от рейки — не кандидат
         }
-        // ============================================================================
         
-        const effectiveLeft = railRect.left + this.SIDE_PADDING;
-        const effectiveRight = railRect.right - this.SIDE_PADDING;
-        let targetLeft = moduleX - effectiveLeft;
-        targetLeft = Math.max(0, Math.min(targetLeft, effectiveRight - effectiveLeft - moduleWidthPx));
+        // === РАСЧЁТ ПОЗИЦИИ — В ЛОГИЧЕСКИХ КООРДИНАТАХ ===
+        // targetLeft, moduleWidthPx, findNearestFreePosition и snapModuleToRail
+        // все работают в логических координатах (style.left внутри рейки).
+        // Поэтому курсор тоже берём логический, а рейку — через style.left.
+        const railLeftLogical = parseFloat(rail.style.left) || 0;
+        const effectiveLeftLogical  = railLeftLogical + this.SIDE_PADDING;
+        // Логическая ширина рейки: clientWidth не масштабируется zoom'ом
+        const effectiveWidthLogical = rail.clientWidth - 2 * this.SIDE_PADDING;
+        
+        let targetLeft = logicalMouse.x - effectiveLeftLogical;
+        targetLeft = Math.max(0, Math.min(targetLeft, effectiveWidthLogical - moduleWidthPx));
+        // ================================================
         
         let bestPos = this.findNearestFreePosition(rail, targetLeft, moduleWidthPx);
         if (bestPos !== -1) {
-            // === [Баг 1] Выбор рейки по близости КУРСОРА к телу рейки,
-            // а не по тому, насколько близко нашлось свободное место.
-            // Так рейка под курсором всегда выигрывает у соседней в том же ряду.
+            // Выбор рейки по близости КУРСОРА к телу рейки (экранные координаты).
             const horizontalDistance = (moduleX < railRect.left)
                 ? railRect.left - moduleX
                 : (moduleX > railRect.right ? moduleX - railRect.right : 0);
             const distance = horizontalDistance + verticalDistance;
-            // =================================================================
             if (distance < minDistance) {
                 minDistance = distance;
                 nearestRail = rail;
@@ -6576,7 +6555,7 @@ class DinRailSelectorUI {
                 
 
                 <button id="add-din-rail-btn" class="v2-add-btn">Добавить рейку(и)</button>
-                <button id="create-shield-btn" class="v2-add-btn" style="margin-top:8px; background:#8e44ad;">🏗️ Создать щит</button>
+                <button id="create-shield-btn" class="v2-add-btn" style="margin-top:8px; background:#8e44ad;"> Создать щит</button>
                 <button id="remove-all-rails-btn" class="sidebar-btn" style="margin-top:8px; background:#e74c3c;">Удалить все рейки</button>
             </div>
         `;
@@ -6631,39 +6610,6 @@ class DinRailSelectorUI {
     }
 }
 
-/* ╔══════════════════════════════════════════════════════════════════════╗
-   ║  34. test-module.js — Тестовая функция                               ║
-   ╚══════════════════════════════════════════════════════════════════════╝ */
-async function testCreateModuleV2() {
-    const workspace = document.getElementById('workspace');
-    if (!workspace) return;
-    
-    const scrollTop = workspace.scrollTop || 0;
-    const baseY = 300 + scrollTop;
-    
-    // Конфигурации тестовых модулей
-    const testModules = [
-        { brand: 'IEK', series: 'ARMAT M06N', type: 'breaker', params: { poles: 1, amps: '16', characteristic: 'C', shortCircuit: '4.5' }, x: 50 },
-        { brand: 'IEK', series: 'KARAT АВДТ32ML',   type: 'diff',    params: { poles: 2, amps: '25', characteristic: 'C', shortCircuit: '6' },   x: 200 },
-        { brand: 'IEK', series: 'ARMAT M06N', type: 'breaker', params: { poles: 3, amps: '25', characteristic: 'C', shortCircuit: '6' },   x: 350 },
-        { brand: 'IEK', series: 'ARMAT M06N', type: 'breaker', params: { poles: 4, amps: '25', characteristic: 'C', shortCircuit: '6' },   x: 500 },
-    ];
-    
-    for (const cfg of testModules) {
-        try {
-            const el = await moduleManagerV2.createModule(cfg.brand, cfg.series, cfg.type, cfg.params);
-            if (!el) continue;
-            el.style.left = cfg.x + 'px';
-            el.style.top  = baseY + 'px';
-            workspace.appendChild(el);
-        } catch (err) {
-            console.error(`testCreateModuleV2: не удалось создать ${cfg.brand} ${cfg.series}:`, err);
-        }
-    }
-    
-    updateEstimateDebounced();
-    updateAllTagsDebounced();
-}
 
 
 /* ╔══════════════════════════════════════════════════════════════════════╗
@@ -12742,8 +12688,7 @@ console.log('[Markers] ModuleMarkerManager зарегистрирован');
    ║   30. wire-marker-manager.js — Маркеры на проводах                   ║
    ║   31. guide-line-manager.js — Направляющие для маршрутизации         ║
    ║   32. module-selector.js — UI селектора модулей                      ║
-   ║   33. din-rail-selector.js — UI селектора DIN-реек                   ║
-   ║   34. test-module.js — Тестовая функция                              ║
+   ║   33. din-rail-selector.js — UI селектора DIN-реек                   ║                            ║
    ║   36. layers-ui.js — UI слоёв                                        ║
    ║   37. favorites-ui.js — UI избранного                                ║
    ║   38. module-context-menu.js — Контекстное меню модуля               ║
