@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.16.1</title>
+    <title>Конструктор Щита v4.13.9</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -1004,6 +1004,27 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
         .test-btn:hover {
             background: #d35400;
         }
+        /* Индикатор автосохранения */
+#autosave-indicator {
+    position: fixed;
+    bottom: 12px;
+    right: 16px;
+    padding: 6px 12px;
+    background: rgba(39, 174, 96, 0.92);
+    color: #fff;
+    font-size: 12px;
+    font-family: 'Segoe UI', sans-serif;
+    border-radius: 6px;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity .25s ease, transform .25s ease;
+    z-index: 9999;
+}
+#autosave-indicator.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
     </style>
 </head>
 <body>
@@ -1117,7 +1138,62 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
         </div>
     </div>
 </div>
+<!-- Модалка генератора щита -->
+<div class="modal-overlay" id="shieldGeneratorModal">
+    <div class="modal-content" style="width: 720px; max-width: 92vw; max-height: 88vh; overflow-y: auto;">
+        <h3 style="margin-top:0; color:#333; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+            🏗️ Создать щит — генератор реек
+        </h3>
 
+        <div style="display: flex; flex-wrap: wrap; gap: 18px;">
+            <!-- Геометрия -->
+            <div style="flex: 1; min-width: 260px;">
+                <h4 style="margin:0 0 10px; color:#2c3e50; font-size:0.9rem; border-bottom:1px solid #eee; padding-bottom:4px;">📐 Геометрия</h4>
+
+                <div class="form-group">
+                    <label>Модулей в ряду на рейке:</label>
+                    <input type="number" id="sg-modulesPerRow" value="12" min="1" max="48" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Расстояние между центрами реек (px):</label>
+                    <input type="number" id="sg-rowCenterGap" value="300" min="300" step="5">
+                </div>
+                <div class="form-group">
+                    <label>Отступ между колонками (px):</label>
+                    <input type="number" id="sg-columnGap" value="60" min="0" step="5">
+                </div>
+            </div>
+
+            <!-- Количество -->
+            <div style="flex: 1; min-width: 260px;">
+                <h4 style="margin:0 0 10px; color:#2c3e50; font-size:0.9rem; border-bottom:1px solid #eee; padding-bottom:4px;">📊 Количество</h4>
+
+                <div class="form-group">
+                    <label>Колонок (групп реек):</label>
+                    <input type="number" id="sg-columnsCount" value="1" min="1" max="10" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Рядов (реек в колонке):</label>
+                    <input type="number" id="sg-rowsPerColumn" value="3" min="1" max="20" step="1">
+                </div>
+
+                <div style="background:#f4f7f9; border:1px solid #e0e6ea; border-radius:6px; padding:8px 10px; margin-top:8px; font-size:0.8rem; color:#555;">
+                    <div id="sg-preview-text">—</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-actions">
+            <button class="modal-btn cancel"
+                onclick="document.getElementById('shieldGeneratorModal').classList.remove('active')">
+                Отмена
+            </button>
+            <button class="modal-btn confirm" onclick="ShieldGeneratorUI.confirm()">
+                Создать щит
+            </button>
+        </div>
+    </div>
+</div>
 <!-- ╔══════════════════════════════════════════════════════════════════════╗
      ║  18. workspace.html — Рабочая область                                ║
      ╚══════════════════════════════════════════════════════════════════════╝ -->
@@ -1485,6 +1561,56 @@ const selectionRectangle = document.getElementById('selectionRectangle');
 
 let selectedModulesV2 = new Set();
 
+/**
+ * Регистр активного перетаскивания.
+ * Любой drag (модуль/рейка/пивот) регистрирует здесь функцию аварийного
+ * завершения. При потере фокуса окна — она вызывается принудительно,
+ * чтобы не висели слушатели mousemove/mouseup на document.
+ */
+const ActiveDrag = {
+    _abortFn: null,
+    
+    /**
+     * @param {Function} abortFn - функция, корректно завершающая drag
+     *   (та же, что вызывается по mouseup)
+     */
+    begin(abortFn) {
+        // Если уже был активный drag — аварийно завершаем старый
+        if (this._abortFn) {
+            console.warn('ActiveDrag: новый drag начат поверх незавершённого — завершаю старый');
+            this.abort();
+        }
+        this._abortFn = abortFn;
+    },
+    
+    /** Нормальное завершение — просто очищаем ссылку. */
+    end() {
+        this._abortFn = null;
+    },
+    
+    /** Аварийное завершение — вызываем сохранённую функцию. */
+    abort() {
+        const fn = this._abortFn;
+        this._abortFn = null;
+        if (fn) {
+            try { fn(); }
+            catch (err) { console.error('ActiveDrag.abort: ошибка завершения drag:', err); }
+        }
+    },
+    
+    isActive() {
+        return this._abortFn !== null;
+    },
+};
+window.ActiveDrag = ActiveDrag;
+
+// Аварийное завершение drag при потере фокуса окном
+window.addEventListener('blur', () => {
+    if (ActiveDrag.isActive()) {
+        ActiveDrag.abort();
+    }
+});
+
 let isShiftPressed = false;
 // === Глобальное отслеживание Shift ===================================
 window.addEventListener('keydown', (e) => {
@@ -1663,6 +1789,41 @@ class DinRailManagerV2 {
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
     this.isDraggingRail = false;
+    
+    // Кэш rect'ов реек на время drag модуля (рейки в этот момент неподвижны).
+    // null = кэш неактивен, считаем rect вживую.
+    this._railRectCache = null;
+    }
+    
+    /**
+     * Замораживает позиции реек: один раз снимает getBoundingClientRect
+     * со всех реек и кладёт в кэш. Вызывать в начале drag модуля.
+     */
+    freezeRailRects() {
+        this._railRectCache = new Map();
+        document.querySelectorAll('.din-rail-v2').forEach(rail => {
+            this._railRectCache.set(rail, rail.getBoundingClientRect());
+        });
+    }
+    
+    /**
+     * Сбрасывает кэш rect'ов. Вызывать в конце drag модуля.
+     */
+    unfreezeRailRects() {
+        this._railRectCache = null;
+    }
+    
+    /**
+     * @private
+     * Возвращает rect рейки: из кэша (если заморожен) или вживую.
+     */
+    _getRailRect(rail) {
+        if (this._railRectCache) {
+            const cached = this._railRectCache.get(rail);
+            if (cached) return cached;
+            // Рейка появилась после заморозки (маловероятно) — считаем вживую
+        }
+        return rail.getBoundingClientRect();
     }
 
 enableRailDragging(rail) {
@@ -1698,13 +1859,13 @@ startDragRail(e, rail) {
     this.onMouseUp = () => this.stopDragRail();
     document.addEventListener('mousemove', this.onMouseMove);
     document.addEventListener('mouseup', this.onMouseUp);
+    ActiveDrag.begin(this.onMouseUp);
 }
 
 dragRail(e) {
     if (!this.draggedRail) return;
     e.preventDefault();
     
-    // Сохраняем последние координаты курсора — пригодятся в stopDragRail
     this._lastMouseEvent = e;
     
     const logicalMouse = getLogicalCoords(e.clientX, e.clientY);
@@ -1718,11 +1879,30 @@ dragRail(e) {
     this.draggedRail.style.left = newLeft + 'px';
     this.draggedRail.style.top  = newTop  + 'px';
     
-    // Тяжёлый пересчёт — на RAF
+    // Только проводов, висящих на ЭТОЙ рейке (модули на ней едут вместе)
     RAFScheduler.schedule('drag-rail', () => {
-        this.guideLineManager?.updateFromRails();
-        window.wiringManagerV2?.invalidateTerminalCache();
-        window.wiringManagerV2?.updateAllWires();
+        if (!window.wiringManagerV2) return;
+        wiringManagerV2.invalidateTerminalCache();
+        
+        // Собираем ID модулей на этой рейке
+        const railEl = this.draggedRail;
+        if (!railEl) return;
+        const moduleIds = Array.from(railEl.querySelectorAll('.module-v2.on-rail'))
+            .map(m => m.dataset.moduleId);
+        
+        // Собираем провода через индекс "клемма → провода"
+        const affectedWires = new Set();
+        moduleIds.forEach(id => {
+            const mEl = wiringManagerV2.moduleManager.modules.get(id);
+            if (!mEl) return;
+            mEl.querySelectorAll('.terminal-v2').forEach(t => {
+                const wires = wiringManagerV2.getWiresForTerminal(t.id);
+                for (const w of wires) affectedWires.add(w);
+            });
+        });
+        
+        // Прогрев кэша + пересчёт + рендер одним вызовом
+        wiringManagerV2._refreshWires(affectedWires);
     });
 }
 
@@ -1730,6 +1910,7 @@ stopDragRail() {
     if (!this.draggedRail) {
         document.removeEventListener('mousemove', this.onMouseMove);
         document.removeEventListener('mouseup', this.onMouseUp);
+        ActiveDrag.end();
         window.HotkeyManager?.enable();
         return;
     }
@@ -1769,15 +1950,36 @@ stopDragRail() {
     
     document.removeEventListener('mousemove', this.onMouseMove);
     document.removeEventListener('mouseup', this.onMouseUp);
+    ActiveDrag.end();
 
     RAFScheduler.cancel('drag-rail');
     
     setTimeout(() => {
-        this.guideLineManager?.updateFromRails();
-        window.wiringManagerV2?.invalidateTerminalCache();
-        window.wiringManagerV2?.updateAllWires();
-        updateAllTagsDebounced();
-    }, APP_CONFIG.RAIL_DRAG_REFLOW_DELAY);
+    this.guideLineManager?.updateFromRails();
+    if (!window.wiringManagerV2) return;
+    wiringManagerV2.invalidateTerminalCache();
+    
+    // Только провода этой рейки
+    const railEl = rail;
+    const moduleIds = Array.from(railEl.querySelectorAll('.module-v2.on-rail'))
+        .map(m => m.dataset.moduleId);
+    
+    // Собираем провода через индекс "клемма → провода"
+    const affectedWires = new Set();
+    moduleIds.forEach(id => {
+        const mEl = wiringManagerV2.moduleManager.modules.get(id);
+        if (!mEl) return;
+        mEl.querySelectorAll('.terminal-v2').forEach(t => {
+            const wires = wiringManagerV2.getWiresForTerminal(t.id);
+            for (const w of wires) affectedWires.add(w);
+        });
+    });
+    
+    // Прогрев кэша + пересчёт + рендер одним вызовом
+    wiringManagerV2._refreshWires(affectedWires);
+    
+    updateAllTagsDebounced();
+}, APP_CONFIG.RAIL_DRAG_REFLOW_DELAY);
     
     window.HotkeyManager?.enable();
 }
@@ -1823,7 +2025,7 @@ stopDragRail() {
         });
         this.rails.clear();
         this.nextId = 0;
-        if (window.wiringManagerV2) window.wiringManagerV2.updateAllWires();
+        RAFScheduler.schedule('render-wires', () => wiringManagerV2.updateAllWires());
     }
 
     _createRailElement(modulesCount) {
@@ -1912,7 +2114,7 @@ stopDragRail() {
         rail.remove();
         this.rails.delete(railId);
         this.guideLineManager.updateFromRails();
-        if (window.wiringManagerV2) window.wiringManagerV2.updateAllWires();
+        RAFScheduler.schedule('render-wires', () => wiringManagerV2.updateAllWires());
     }
 
     snapModuleToRail(moduleEl, railEl, targetLeftPx) {
@@ -1939,7 +2141,31 @@ stopDragRail() {
     
     railEl.appendChild(moduleEl);
     this.clearHighlight();
-    if (window.wiringManagerV2) window.wiringManagerV2.updateAllWires();
+    if (window.wiringManagerV2) {
+    wiringManagerV2.invalidateTerminalCache();
+    // Накапливаем модули, обновим одним проходом
+    if (!this._pendingWireUpdate) this._pendingWireUpdate = new Set();
+    this._pendingWireUpdate.add(moduleEl.dataset.moduleId);
+    RAFScheduler.schedule('snap-wire-update', () => {
+        const ids = this._pendingWireUpdate;
+        this._pendingWireUpdate = null;
+        if (!ids || ids.size === 0) return;
+        
+        // Собираем провода этих модулей через индекс "клемма → провода"
+        const affectedWires = new Set();
+        ids.forEach(id => {
+            const mEl = wiringManagerV2.moduleManager.modules.get(id);
+            if (!mEl) return;
+            mEl.querySelectorAll('.terminal-v2').forEach(t => {
+                const wires = wiringManagerV2.getWiresForTerminal(t.id);
+                for (const w of wires) affectedWires.add(w);
+            });
+        });
+        
+         // Прогрев кэша + пересчёт + рендер одним вызовом
+        wiringManagerV2._refreshWires(affectedWires);
+    });
+}
     return true;
 }
 
@@ -1956,11 +2182,20 @@ stopDragRail() {
     let minDistance = Infinity;
     
     document.querySelectorAll('.din-rail-v2').forEach(rail => {
-        const railRect = rail.getBoundingClientRect();
+        const railRect = this._getRailRect(rail);
         const railCenterY = railRect.top + railRect.height / 2;
         const verticalDistance = Math.abs(moduleY - railCenterY);
         const verticalThreshold = moduleEl.clientHeight / 2 + APP_CONFIG.RAIL_VERTICAL_THRESHOLD;
         if (verticalDistance > verticalThreshold) return;
+        
+        // === [Баг 2] Горизонтальная отбраковка: курсор должен быть над телом рейки ===
+        // Небольшой допуск, чтобы не "обрывалось" ровно на пикселе края.
+        const HORIZONTAL_TOLERANCE = APP_CONFIG.RAIL_GROUP_TOLERANCE_X;
+        if (moduleX < railRect.left - HORIZONTAL_TOLERANCE ||
+            moduleX > railRect.right + HORIZONTAL_TOLERANCE) {
+            return; // курсор сбоку от рейки — не кандидат
+        }
+        // ============================================================================
         
         const effectiveLeft = railRect.left + this.SIDE_PADDING;
         const effectiveRight = railRect.right - this.SIDE_PADDING;
@@ -1969,7 +2204,14 @@ stopDragRail() {
         
         let bestPos = this.findNearestFreePosition(rail, targetLeft, moduleWidthPx);
         if (bestPos !== -1) {
-            const distance = Math.abs(targetLeft - bestPos) + verticalDistance;
+            // === [Баг 1] Выбор рейки по близости КУРСОРА к телу рейки,
+            // а не по тому, насколько близко нашлось свободное место.
+            // Так рейка под курсором всегда выигрывает у соседней в том же ряду.
+            const horizontalDistance = (moduleX < railRect.left)
+                ? railRect.left - moduleX
+                : (moduleX > railRect.right ? moduleX - railRect.right : 0);
+            const distance = horizontalDistance + verticalDistance;
+            // =================================================================
             if (distance < minDistance) {
                 minDistance = distance;
                 nearestRail = rail;
@@ -2009,7 +2251,10 @@ rearrangeModules() {
     document.querySelectorAll('.din-rail-v2').forEach(rail => {
         this._packModulesOnRail(rail);
     });
-    window.wiringManagerV2?.updateAllWires();
+    RAFScheduler.schedule('render-wires-bulk', () => {
+    wiringManagerV2?.invalidateTerminalCache();
+    wiringManagerV2?.updateAllWires();
+});
 }
 
 /**
@@ -2238,7 +2483,7 @@ _detachModuleFromRail(mod, rail) {
             y: parseFloat(railEl.style.top)  || 0,
         };
     };
-    DinRailManagerV2.prototype.recreateRail = function (snapshot) {
+    DinRailManagerV2.prototype.recreateRail = function (snapshot, options = {}) {
         if (!snapshot || !snapshot.id) {
             console.error('recreateRail: некорректный snapshot', snapshot);
             return null;
@@ -2286,7 +2531,9 @@ if (savedNextId > this.nextId) {
         ws.appendChild(railEl);
         this.rails.set(snapshot.id, railEl);
         this.enableRailDragging(railEl);
-        this.guideLineManager.updateFromRails();
+        if (!options.deferGuides) {
+    this.guideLineManager.updateFromRails();
+}
 
 // Восстановление видимости слоя
         const layer = window.LayersUI?.getLayerById?.(railEl.dataset.layerId);
@@ -3146,12 +3393,18 @@ startDragModule(e, moduleId) {
             return null;
         }).filter(Boolean);
         
-        // Отключаем хоткеи на время drag
+         // Отключаем хоткеи на время drag
         window.HotkeyManager?.disable();
         // =================================
 
         const startLogical = getLogicalCoords(e.clientX, e.clientY);
         const isGroup = selectedElements.length > 1;
+
+        // Замораживаем rect'ы реек — во время drag они неподвижны,
+        // незачем дёргать getBoundingClientRect каждый кадр.
+        if (!isGroup && dinRailManagerV2) {
+            dinRailManagerV2.freezeRailRects();
+        }
 
         const onMouseMove = (ev) => {
             const current = getLogicalCoords(ev.clientX, ev.clientY);
@@ -3164,32 +3417,44 @@ startDragModule(e, moduleId) {
             });
 
             RAFScheduler.schedule('drag-modules', () => {
-                wiringManagerV2?.invalidateTerminalCache();
-                if (wiringManagerV2) {
-                    selectedElements.forEach(item => {
-                        if (item.isModule) {
-                            wiringManagerV2.updateWiresForModule(
-                                item.element.dataset.moduleId,
-                                false
-                            );
-                        }
-                    });
-                    wiringManagerV2.renderWires();
-                }
-
-                if (!isGroup && dinRailManagerV2) {
-                    dinRailManagerV2.findNearestRail(targetModule);
-                }
-                
-                if (dinRailManagerV2 && selectedElements.some(i => i.isRail)) {
-                    dinRailManagerV2.guideLineManager.updateFromRails();
-                }
-            });
+    if (!wiringManagerV2) return;
+    wiringManagerV2.invalidateTerminalCache();
+    
+    // Собираем провода через индекс "клемма → провода" — без перебора всех wires
+    const affectedWires = new Set();
+    selectedElements.forEach(item => {
+        if (!item.isModule) return;
+        item.element.querySelectorAll('.terminal-v2').forEach(t => {
+            const wires = wiringManagerV2.getWiresForTerminal(t.id);
+            for (const w of wires) affectedWires.add(w);
+        });
+    });
+    
+    // Пересчитываем breakpoints только им
+    affectedWires.forEach(wire => {
+        const fromEl = document.getElementById(wire.from);
+        const toEl = document.getElementById(wire.to);
+        if (fromEl && toEl) {
+            wire.breakpoints = wiringManagerV2.calculateBreakpoints(fromEl, toEl, wire);
+        }
+    });
+    
+    // Рендерим только их
+    affectedWires.forEach(wire => wiringManagerV2.renderSingleWire(wire.id));
+    
+    if (!isGroup && dinRailManagerV2) {
+                        dinRailManagerV2.findNearestRail(targetModule, ev.clientX, ev.clientY, true);
+                    }
+    if (dinRailManagerV2 && selectedElements.some(i => i.isRail)) {
+        dinRailManagerV2.guideLineManager.updateFromRails();
+    }
+});
         };
         
         const onMouseUp = () => {
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
+            ActiveDrag.end();
             
             RAFScheduler.cancel('drag-modules');
             
@@ -3197,7 +3462,10 @@ startDragModule(e, moduleId) {
             let snapFailed = false;
             
             if (!isGroup && dinRailManagerV2) {
-                const result = dinRailManagerV2.findNearestRail(targetModule, false);
+                const lastMouse = window._lastMouseClient || {};
+                const result = dinRailManagerV2.findNearestRail(
+                    targetModule, lastMouse.x, lastMouse.y, false
+                );
                 if (result) {
                     const ok = dinRailManagerV2.snapModuleToRail(
                         targetModule, result.rail, result.leftPx
@@ -3222,6 +3490,7 @@ startDragModule(e, moduleId) {
             }
             
             dinRailManagerV2?.clearHighlight();
+            dinRailManagerV2?.unfreezeRailRects();
             
             if (dinRailManagerV2 && selectedElements.some(i => i.isRail)) {
                 dinRailManagerV2.guideLineManager.updateFromRails();
@@ -3269,6 +3538,7 @@ startDragModule(e, moduleId) {
         
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
+        ActiveDrag.begin(onMouseUp);
     }
 }
 /* ╔══════════════════════════════════════════════════════════════════════╗
@@ -3742,29 +4012,38 @@ propagateTag(terminalId, visited = new Set()) {
         } 
     }
     
-    // 2. Распространение через провода
+    // 2. Распространение через провода (перемычки).
+    // Провод НЕ имеет направления: тег распространяется в любую сторону —
+    // IN→OUT, OUT→IN, IN→IN, OUT→OUT. Это позволяет соединять модули
+    // "перемычками" вместо гребёнки и получать корректные теги по цепочке.
+    //
+    // Логика переноса согласована с CreateWireCommand (блок 52.5):
+    // тег источника ставится на целевую клемму, если она "универсальна"
+    // (L/N, All) ИЛИ совместима с источником по группе (фаза/ноль).
     if (window.wiringManagerV2) {
-        const wires = window.wiringManagerV2.wires;
-        wires.forEach(wire => {
-            if (wire.from === terminalId && wire.type === 'wire') {
-                const targetId = wire.to;
-                const targetEl = document.getElementById(targetId);
-                if (targetEl && !this.isTerminalProtected(targetEl)) {
-                    const currentTag = targetEl.dataset.tag;
-                    if (currentTag !== sourceTag && (currentTag === 'L/N' || currentTag === 'All')) {
-                        this.setTag(targetId, sourceTag);
-                        this.propagateTag(targetId, visited);
-                    }
-                }
-            } else if (wire.to === terminalId && wire.type === 'wire') {
-                const targetId = wire.from;
-                const targetEl = document.getElementById(targetId);
-                if (targetEl && !this.isTerminalProtected(targetEl)) {
-                    const currentTag = targetEl.dataset.tag;
-                    if (currentTag !== sourceTag && (currentTag === 'L/N' || currentTag === 'All')) {
-                        this.setTag(targetId, sourceTag);
-                        this.propagateTag(targetId, visited);
-                    }
+        const connectedWires = window.wiringManagerV2.getWiresForTerminal(terminalId);
+        connectedWires.forEach(wire => {
+            if (wire.mode === 'comb') return; // гребёнка теги не распространяет
+
+            // "Другой конец" провода — без учёта типа клеммы (in/out/in-src)
+            let targetId = null;
+            if (wire.from === terminalId)      targetId = wire.to;
+            else if (wire.to === terminalId)   targetId = wire.from;
+            if (!targetId) return;
+
+            const targetEl = document.getElementById(targetId);
+            if (!targetEl || this.isTerminalProtected(targetEl)) return;
+
+            const currentTag = targetEl.dataset.tag;
+            if (currentTag === sourceTag) return; // уже совпадает — нечего делать
+
+            // Переносим, если цель универсальна или совместима по группе.
+            const targetIsUniversal = (currentTag === 'L/N' || currentTag === 'All');
+            const compatible = this.areCompatible(sourceTag, currentTag, 'wire');
+
+            if (targetIsUniversal || compatible) {
+                if (this.setTag(targetId, sourceTag)) {
+                    this.propagateTag(targetId, visited);
                 }
             }
         });
@@ -3823,6 +4102,14 @@ class WiringManagerV2 {
 
     this._terminalCenterCache = new Map(); // terminalId -> {x, y}
     this._cacheInvalidated = true;
+// Кэш DOM-элементов путей: wireId -> path element
+    this._pathCache = new Map();
+    // Кэш пивотов: wireId -> Map<pointIndex, circle element>
+    this._pivotCache = new Map();
+
+    // Индекс: terminalId -> Set<wire>. Ускоряет распространение тегов и
+    // поиск проводов по клемме. Инвалидируется при любом изменении this.wires.
+    this._termWireIndex = null;
 }
 
 /**
@@ -3831,6 +4118,45 @@ class WiringManagerV2 {
  */
 invalidateTerminalCache() {
     this._cacheInvalidated = true;
+}
+
+/**
+ * Инвалидирует индекс "клемма → провода".
+ * Вызывать при добавлении/удалении провода или изменении его концов.
+ */
+invalidateWireIndex() {
+    this._termWireIndex = null;
+}
+
+/**
+ * @private
+ * Строит (лениво) индекс terminalId -> Set<wire>.
+ */
+_getTermWireIndex() {
+    if (this._termWireIndex) return this._termWireIndex;
+
+    const index = new Map();
+    const addRef = (termId, wire) => {
+        let set = index.get(termId);
+        if (!set) { set = new Set(); index.set(termId, set); }
+        set.add(wire);
+    };
+    for (const wire of this.wires) {
+        addRef(wire.from, wire);
+        addRef(wire.to, wire);
+    }
+    this._termWireIndex = index;
+    return index;
+}
+
+/**
+ * Возвращает массив проводов, подключённых к данной клемме (через индекс).
+ * @param {string} terminalId
+ * @returns {Array}
+ */
+getWiresForTerminal(terminalId) {
+    const set = this._getTermWireIndex().get(terminalId);
+    return set ? Array.from(set) : [];
 }
 
 /**
@@ -3849,6 +4175,61 @@ _getTerminalCenter(el) {
         this._terminalCenterCache.set(id, pos);
     }
     return pos;
+}
+/**
+ * Пакетно прогревает кэш центров клемм.
+ * Все getBoundingClientRect идут подряд, без записей в DOM между ними,
+ * поэтому браузер делает forced reflow один раз, а не N раз.
+ *
+ * Вызывать ПЕРЕД серией renderSingleWire, когда геометрия изменилась.
+ *
+ * @param {Iterable<string>} terminalIds - id клемм, которые понадобятся
+ */
+warmTerminalCache(terminalIds) {
+    // Сброс кэша, если он был инвалидирован движением
+    if (this._cacheInvalidated) {
+        this._terminalCenterCache.clear();
+        this._cacheInvalidated = false;
+    }
+    // Только чтения — никаких записей в DOM в этом цикле!
+    for (const id of terminalIds) {
+        if (this._terminalCenterCache.has(id)) continue;
+        const el = document.getElementById(id);
+        if (el) {
+            this._terminalCenterCache.set(id, getLogicalCenter(el));
+        }
+    }
+}
+/**
+ * Собирает id всех клемм затронутых проводов и прогревает кэш,
+ * затем пересчитывает breakpoints и рендерит эти провода.
+ *
+ * @param {Set|Array} affectedWires - провода для обновления
+ */
+_refreshWires(affectedWires) {
+    // 1. Собираем все клеммы (from/to) для прогрева
+    const termIds = new Set();
+    affectedWires.forEach(wire => {
+        termIds.add(wire.from);
+        termIds.add(wire.to);
+    });
+
+    // 2. Один батч-прогрев → один reflow на всё
+    this.warmTerminalCache(termIds);
+
+    // 3. Пересчёт breakpoints (теперь _getTerminalCenter из кэша, без reflow)
+    const affectedIds = [];
+    affectedWires.forEach(wire => {
+        const fromEl = document.getElementById(wire.from);
+        const toEl = document.getElementById(wire.to);
+        if (fromEl && toEl) {
+            wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
+            affectedIds.push(wire.id);
+        }
+    });
+
+    // 4. Рендер
+    affectedIds.forEach(id => this.renderSingleWire(id));
 }
 getRoundedPath(points, radius = 30) {
     if (!points || points.length < 2) return '';
@@ -4138,8 +4519,8 @@ completeWiringFromClick(targetTerminal, e) {
 }
 
 calculateBreakpoints(fromEl, toEl, wire = null) {
-    const startPoint = getLogicalCenter(fromEl);
-    const endPoint   = getLogicalCenter(toEl);
+    const startPoint = this._getTerminalCenter(fromEl);
+    const endPoint   = this._getTerminalCenter(toEl);
     const x1 = startPoint.x, y1 = startPoint.y;
     const x2 = endPoint.x,   y2 = endPoint.y;
 
@@ -4278,37 +4659,43 @@ CalculateBreakpointsNoR(x1, y1, x2, y2, isFromSupply, fromEl, toEl) {
     };
 }
 updateWiresForModule(moduleId, shouldRender = true) {
-        const moduleEl = this.moduleManager.modules.get(moduleId);
-        if (!moduleEl) return;
+    const moduleEl = this.moduleManager.modules.get(moduleId);
+    if (!moduleEl) return;
 
-        const terminalIds = Array.from(moduleEl.querySelectorAll('.terminal-v2')).map(t => t.id);
-        
-        this.wires.forEach(wire => {
-            if (terminalIds.includes(wire.from) || terminalIds.includes(wire.to)) {
-                // Полный перерасчёт: позиции точек могли сместиться вместе с модулем
-                const fromEl = document.getElementById(wire.from);
-                const toEl = document.getElementById(wire.to);
-                if (fromEl && toEl) {
-                    wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
-                }
-            }
-        });
-        
-        if (shouldRender) {
-            this.renderWires();
+    // Через индекс "клемма → провода" — без полного перебора this.wires
+    const affectedSet = new Set();
+    moduleEl.querySelectorAll('.terminal-v2').forEach(t => {
+        const wires = this.getWiresForTerminal(t.id);
+        for (const w of wires) affectedSet.add(w);
+    });
+
+    const affected = [];
+    affectedSet.forEach(wire => {
+        const fromEl = document.getElementById(wire.from);
+        const toEl = document.getElementById(wire.to);
+        if (fromEl && toEl) {
+            wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
+            affected.push(wire.id);
         }
+    });
+
+    if (shouldRender) {
+        affected.forEach(id => this.renderSingleWire(id));
     }
+}                                                                                                        
 
     updateAllWires() {
-        this.wires.forEach(wire => {
-            const fromEl = document.getElementById(wire.from);
-            const toEl = document.getElementById(wire.to);
-            if (fromEl && toEl) {
-                wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
-            }
-        });
-        this.renderWires();
-    }
+    // Только пересчёт breakpoints, без рендера каждого
+    this.wires.forEach(wire => {
+        const fromEl = document.getElementById(wire.from);
+        const toEl = document.getElementById(wire.to);
+        if (fromEl && toEl) {
+            wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
+        }
+    });
+    // Один пакетный рендер на кадр
+    RAFScheduler.schedule('render-wires', () => this.renderWires());
+}
 
     cancelWiring() {
         if (this.wiringStartTerminal) {
@@ -4334,24 +4721,94 @@ updateWiresForModule(moduleId, shouldRender = true) {
     document.removeEventListener('mousemove', this.handleMouseMove);
     document.removeEventListener('mouseup', this.handleMouseUp);
 }
+/**
+ * Перерисовывает один провод. В разы быстрее renderWires(),
+ * когда нужно обновить только что-то одно.
+ */
+renderSingleWire(wireId) {
+    const wire = this.wires.find(w => w.id === wireId);
+    if (!wire) return;
 
+    const fromEl = document.getElementById(wire.from);
+    const toEl   = document.getElementById(wire.to);
+    if (!fromEl || !toEl) return;
+
+    const p1 = this._getTerminalCenter(fromEl);
+    const p2 = this._getTerminalCenter(toEl);
+
+    if (wire.breakpoints?.points) {
+        const pts = wire.breakpoints.points;
+        pts[0] = { x: p1.x, y: p1.y };
+        pts[pts.length - 1] = { x: p2.x, y: p2.y };
+    } else {
+        wire.breakpoints = this.calculateBreakpoints(fromEl, toEl, wire);
+    }
+
+    // Укорачивание концов (как в renderWires)
+    const TERMINAL_INSET = 9;
+    const rawPts = wire.breakpoints.points;
+    let ptsForPath = rawPts;
+    if (rawPts.length >= 2) {
+        ptsForPath = rawPts.slice();
+        ptsForPath[0] = this._shiftToward(rawPts[0], rawPts[1], TERMINAL_INSET);
+        ptsForPath[ptsForPath.length - 1] = this._shiftToward(
+            rawPts[rawPts.length - 1],
+            rawPts[rawPts.length - 2],
+            TERMINAL_INSET
+        );
+    }
+
+    const d = this.getRoundedPath(ptsForPath, APP_CONFIG.WIRE_CORNER_RADIUS);
+    const svgWires = document.getElementById('wires-layer');
+    const svgCombs = document.getElementById('comb-layer');
+    const targetSvg = wire.mode === 'comb' ? svgCombs : svgWires;
+    const color = this.getWireColor(wire.color);
+    const thickness = this.getWireThickness(wire.thickness);
+    const strokeWidth = wire.mode === 'comb' ? 7 : thickness;
+    const strokeColor = wire.mode === 'comb' ? '#e67e22' : color;
+
+    let path = this._pathCache.get(wire.id);
+if (path && !path.isConnected) { this._pathCache.delete(wire.id); path = null; }
+    if (!path) {
+        path = this._createWirePathElement(wire, targetSvg);
+    }
+    if (path.parentNode !== targetSvg) {
+        targetSvg.appendChild(path);
+    }
+
+    if (path.getAttribute('d') !== d) path.setAttribute('d', d);
+    if (path.getAttribute('stroke') !== strokeColor) path.setAttribute('stroke', strokeColor);
+    const swStr = String(strokeWidth);
+    if (path.getAttribute('stroke-width') !== swStr) path.setAttribute('stroke-width', swStr);
+
+    this._syncControlPoints(wire);
+
+    // Обновляем маркеры этого провода
+    const layer = document.getElementById('markers-layer');
+    if (layer && window.WireMarkerManager) {
+        const isSelected = (this.selectedWireId === wire.id);
+        WireMarkerManager._renderMarkerForWire(wire, layer, isSelected);
+    }
+}
     renderWires() {
     const svgWires = document.getElementById('wires-layer');
     const svgCombs = document.getElementById('comb-layer');
     
     const currentIds = new Set(this.wires.map(w => w.id));
     
-    // 1) Удаляем DOM-элементы проводов, которых больше нет в массиве
-    document.querySelectorAll('path.wire').forEach(path => {
-        if (!currentIds.has(path.dataset.wireId)) {
-            path.remove();
+   // 1) Удаляем DOM проводов, которых больше нет (пути + их пивоты)
+this._pathCache.forEach((path, id) => {
+    if (!currentIds.has(id)) {
+        path.remove();
+        this._pathCache.delete(id);
+
+        const pivots = this._pivotCache.get(id);
+        if (pivots) {
+            pivots.forEach(c => c.remove());
+            this._pivotCache.delete(id);
         }
-    });
-    document.querySelectorAll('circle.pivot').forEach(circle => {
-        if (!currentIds.has(circle.dataset.wireId)) {
-            circle.remove();
-        }
-    });
+    }
+});
     
     // 2) Обновляем/создаём пути
     this.wires.forEach(wire => {
@@ -4393,7 +4850,12 @@ const d = this.getRoundedPath(ptsForPath, APP_CONFIG.WIRE_CORNER_RADIUS);
         const strokeWidth = wire.mode === 'comb' ? 7 : thickness;
         const strokeColor = wire.mode === 'comb' ? '#e67e22' : color;
 
-        let path = document.querySelector(`path.wire[data-wire-id="${wire.id}"]`);
+        let path = this._pathCache.get(wire.id);
+        // Если элемент был удалён из DOM мимо кэша — сбрасываем
+        if (path && !path.isConnected) {
+            this._pathCache.delete(wire.id);
+            path = null;
+        }
         if (!path) {
             path = this._createWirePathElement(wire, targetSvg);
         }
@@ -4438,6 +4900,7 @@ _createWirePathElement(wire, parentSvg) {
 });
     
     parentSvg.appendChild(path);
+    this._pathCache.set(wire.id, path);
     return path;
 }
 
@@ -4449,44 +4912,53 @@ _createWirePathElement(wire, parentSvg) {
 _syncControlPoints(wire) {
     const svg = document.getElementById('wires-layer');
     const points = wire.breakpoints.points;
-    const expectedIndices = [];
-    for (let i = 1; i < points.length - 1; i++) expectedIndices.push(i);
-    
-    // Текущие пивоты для этого провода
-    const existing = new Map();
-    document.querySelectorAll(`circle.pivot[data-wire-id="${wire.id}"]`).forEach(c => {
-        existing.set(parseInt(c.dataset.pointIndex), c);
-    });
-    
-    // Удаляем те, что больше не нужны (если число точек уменьшилось)
+
+    // Берём (или создаём) карту пивотов этого провода из кэша
+    let existing = this._pivotCache.get(wire.id);
+    if (!existing) {
+        existing = new Map();
+        this._pivotCache.set(wire.id, existing);
+    }
+
+    // Какие индексы должны существовать (промежуточные точки)
+    const expected = new Set();
+    for (let i = 1; i < points.length - 1; i++) expected.add(i);
+
+    // Удаляем пивоты, которые больше не нужны
     existing.forEach((circle, idx) => {
-        if (!expectedIndices.includes(idx)) {
+        if (!expected.has(idx)) {
             circle.remove();
             existing.delete(idx);
         }
     });
-    
-    // Создаём/обновляем
-    expectedIndices.forEach(idx => {
+
+    // Создаём/обновляем нужные
+    expected.forEach(idx => {
         const point = points[idx];
         let circle = existing.get(idx);
-        
+
+        // Страховка от рассинхрона кэша с DOM
+        if (circle && !circle.isConnected) {
+            existing.delete(idx);
+            circle = null;
+        }
+
         if (!circle) {
             circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             circle.setAttribute('r', 6);
             circle.classList.add('pivot', 'p-corner');
             circle.dataset.wireId = wire.id;
             circle.dataset.pointIndex = idx;
-            
+
             circle.onmousedown = (e) => {
                 e.stopPropagation();
                 e.preventDefault();
                 this.startDragPivot(e, wire.id, idx);
             };
             svg.appendChild(circle);
+            existing.set(idx, circle);
         }
-        
-        // Обновляем позицию
+
         circle.setAttribute('cx', point.x);
         circle.setAttribute('cy', point.y);
     });
@@ -4581,6 +5053,7 @@ selectWire(wireId) {
     
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
+    ActiveDrag.begin(onMouseUp);
 }
 
     dragPivot(e) {
@@ -4672,6 +5145,7 @@ selectWire(wireId) {
     if (this._onMouseUp) {
         document.removeEventListener('mouseup', this._onMouseUp);
     }
+    ActiveDrag.end();
     
     // НЕ ВЫЗЫВАЕМ renderWires() - это сбросит все изменения!
     // Вместо этого просто очищаем состояние
@@ -4688,51 +5162,63 @@ updateWirePathImmediate(wire) {
 }
 
 deleteWire(wireId) {
-     this.invalidateTerminalCache();
+    this.invalidateTerminalCache();
+    this.invalidateWireIndex();
     const wire = this.wires.find(w => w.id === wireId);
-    if (wire) {
-        
-        // Сохраняем информацию о клеммах до удаления
-        const fromEl = document.getElementById(wire.from);
-        const toEl = document.getElementById(wire.to);
-        
-        // Удаляем провод
-        this.wires = this.wires.filter(w => w.id !== wireId);
-        
-        // Сбрасываем цвета клемм
-        this.resetTerminalColor(wire.from);
-        this.resetTerminalColor(wire.to);
-        
-        // Получаем дефолтные теги из конфигурации модуля
-        const fromDefaultTag = this.getDefaultTagForTerminal(wire.from);
-        const toDefaultTag = this.getDefaultTagForTerminal(wire.to);
-        
-        // Проверяем, есть ли другие провода на этих клеммах
-        const hasFromWires = this.wires.some(w => w.from === wire.from || w.to === wire.from);
-        const hasToWires = this.wires.some(w => w.from === wire.to || w.to === wire.to);
-        
-        // Сбрасываем тег на дефолтный, если нет других проводов
-        if (fromEl && !hasFromWires && !fromEl.classList.contains('supply-terminal') && fromEl.dataset.type !== 'bus') {
-            const currentTag = fromEl.dataset.tag;
-            if (currentTag !== fromDefaultTag) {
-                fromEl.dataset.tag = fromDefaultTag;
-            }
-        }
-        
-        if (toEl && !hasToWires && !toEl.classList.contains('supply-terminal') && toEl.dataset.type !== 'bus') {
-            const currentTag = toEl.dataset.tag;
-            if (currentTag !== toDefaultTag) {
-                toEl.dataset.tag = toDefaultTag;
-            }
-        }
-        
-        // Перерисовываем провода
-        this.renderWires();
-        
-        // Обновляем теги через внутренние связи
-        if (this.tagManager) {
-            this.tagManager.updateAllTags();
-        }
+    if (!wire) return;
+    
+    const fromEl = document.getElementById(wire.from);
+    const toEl = document.getElementById(wire.to);
+    
+    // Удаляем провод из массива
+    this.wires = this.wires.filter(w => w.id !== wireId);
+    
+    // === ТОЧЕЧНОЕ удаление DOM-элементов этого провода ===
+    const path = document.querySelector(`path.wire[data-wire-id="${wireId}"]`);
+    if (path) path.remove();
+    this._pathCache.delete(wireId);
+
+    // Удаляем пивоты этого провода через кэш
+    const pivots = this._pivotCache.get(wireId);
+    if (pivots) {
+        pivots.forEach(c => c.remove());
+        this._pivotCache.delete(wireId);
+    }
+    
+    // Удаляем маркеры этого провода
+    const mFrom = document.getElementById(`marker_${wireId}_from`);
+    const mTo = document.getElementById(`marker_${wireId}_to`);
+    if (mFrom) mFrom.remove();
+    if (mTo) mTo.remove();
+    // ====================================================
+    
+    // Сбрасываем цвета клемм
+    this.resetTerminalColor(wire.from);
+    this.resetTerminalColor(wire.to);
+    
+    // Дефолтные теги. Сбрасываем ТОЛЬКО клеммы, оставшиеся без проводов.
+    // Используем setTag (а не прямую запись в dataset), чтобы:
+    //   - обновился textContent (подпись внутри клеммы);
+    //   - сработала защита isTerminalProtected (PE и т.п.).
+    const fromDefaultTag = this.getDefaultTagForTerminal(wire.from);
+    const toDefaultTag = this.getDefaultTagForTerminal(wire.to);
+    
+    const hasFromWires = this.wires.some(w => w.from === wire.from || w.to === wire.from);
+    const hasToWires = this.wires.some(w => w.from === wire.to || w.to === wire.to);
+    
+    if (fromEl && !hasFromWires && !fromEl.classList.contains('supply-terminal') && fromEl.dataset.type !== 'bus') {
+        this.tagManager.setTag(wire.from, fromDefaultTag);
+    }
+    if (toEl && !hasToWires && !toEl.classList.contains('supply-terminal') && toEl.dataset.type !== 'bus') {
+        this.tagManager.setTag(wire.to, toDefaultTag);
+    }
+    
+    // Полный пересчёт тегов СИНХРОННО. Это критично: после сброса одной клеммы
+    // на дефолт её "пара" внутри модуля (через internalConnections) должна
+    // прийти к согласованному значению немедленно, иначе IN и OUT одного
+    // модуля временно показывают разные теги.
+    if (this.tagManager) {
+        this.tagManager.updateAllTags();
     }
 }
 
@@ -4768,30 +5254,26 @@ updateLayers() {
     if (!window.LayersUI) return;
     const activeId = LayersUI.getActiveId();
     
-    const computeOpacity = (wire) => {
+    this.wires.forEach(wire => {
+        const path = this._pathCache.get(wire.id);
+        if (!path) return;
         const layer = LayersUI.getLayerById(wire.layerId);
-        // Слой не найден — показываем как обычный неактивный
-        if (!layer) return '0.3';
-        // Слой скрыт — полупрозрачный
-        if (!layer.visible) return '0.15';
-        // Слой видим: активный — 1, иначе 0.3
-        return (wire.layerId === activeId) ? '1' : '0.3';
-    };
-    
-    document.querySelectorAll('path.wire').forEach(path => {
-        const wire = this.wires.find(w => w.id === path.dataset.wireId);
-        if (!wire) return;
-        path.style.display = '';                 // никогда не прячем
-        path.style.opacity = computeOpacity(wire);
+        let opacity;
+        if (!layer) opacity = '0.3';
+        else if (!layer.visible) opacity = '0.15';
+        else opacity = (wire.layerId === activeId) ? '1' : '0.3';
+        
+        if (path.style.opacity !== opacity) path.style.opacity = opacity;
     });
     
+    // Пивоты только активного слоя — но не перебираем все
     document.querySelectorAll('circle.pivot').forEach(circle => {
         const wire = this.wires.find(w => w.id === circle.dataset.wireId);
         if (!wire) return;
         const layer = LayersUI.getLayerById(wire.layerId);
-        // Пивоты показываем только для активного видимого слоя — иначе бессмысленно
         const isInteractive = layer && layer.visible && wire.layerId === activeId;
-        circle.style.display = isInteractive ? '' : 'none';
+        const target = isInteractive ? '' : 'none';
+        if (circle.style.display !== target) circle.style.display = target;
     });
 }
 
@@ -4842,7 +5324,7 @@ updateLayers() {
      * @param {Object} snapshot
      * @returns {Object|null} — объект провода в this.wires
      */
-    WiringManagerV2.prototype.recreateWire = function (snapshot) {
+    WiringManagerV2.prototype.recreateWire = function (snapshot, options = {}) {
         if (!snapshot || !snapshot.id) {
             console.error('recreateWire: некорректный snapshot', snapshot);
             return null;
@@ -4869,6 +5351,7 @@ updateLayers() {
 
         this.wires.push(wire);
         this.invalidateTerminalCache();
+        this.invalidateWireIndex();
 
         // Окрашиваем клеммы
         try {
@@ -4891,9 +5374,10 @@ updateLayers() {
             && wire.markerNumber >= WireMarkerManager.nextMarkerNumber) {
             WireMarkerManager.nextMarkerNumber = wire.markerNumber + 1;
         }
-
-        // Перерисовка
-        this.renderWires();
+// Перерисовка (можно отложить через options.deferRender)
+        if (!options.deferRender) {
+            this.renderWires();
+        }
 
         return wire;
     };
@@ -4968,66 +5452,48 @@ const WireMarkerManager = {
     renderAll() {
     const layer = document.getElementById('markers-layer');
     if (!layer) return;
-
-     Array.from(layer.children).forEach(el => { el.style.display = ''; });
     
     const wires = window.wiringManagerV2?.wires || [];
     const selectedWireId = window.wiringManagerV2?.selectedWireId || null;
     
-    // 1. Удаляем маркеры исчезнувших проводов
+    // Удаляем маркеры исчезнувших проводов
     const currentIds = new Set();
     wires.forEach(w => {
         currentIds.add(`marker_${w.id}_from`);
         currentIds.add(`marker_${w.id}_to`);
     });
-    Array.from(layer.children).forEach(el => {
-        if (!currentIds.has(el.id)) el.remove();
-    });
     
-    // 2. Рисуем все маркеры
+    // Один проход вместо двух
+    const toRemove = [];
+    for (const el of layer.children) {
+        if (!currentIds.has(el.id)) toRemove.push(el);
+    }
+    toRemove.forEach(el => el.remove());
+    
+    // Рисуем/обновляем
     wires.forEach(wire => {
         this._renderMarkerForWire(wire, layer, wire.id === selectedWireId);
     });
     
-    // 3. Если есть выделенный провод — скрываем чужие маркеры на ЕГО клеммах
+    // Логика выделения (без изменений)
     if (selectedWireId) {
         const selWire = wires.find(w => w.id === selectedWireId);
         if (selWire) {
             const selectedTerminals = new Set([selWire.from, selWire.to]);
-            
             wires.forEach(wire => {
                 const isSelected = wire.id === selectedWireId;
-
                 const fromMarker = document.getElementById(`marker_${wire.id}_from`);
                 if (fromMarker) {
-                    if (!isSelected && selectedTerminals.has(wire.from)) {
-                        fromMarker.style.display = 'none';
-                    } else {
-                        fromMarker.style.display = '';
-                    }
+                    const target = (!isSelected && selectedTerminals.has(wire.from)) ? 'none' : '';
+                    if (fromMarker.style.display !== target) fromMarker.style.display = target;
                 }
-
                 const toMarker = document.getElementById(`marker_${wire.id}_to`);
                 if (toMarker) {
-                    if (!isSelected && selectedTerminals.has(wire.to)) {
-                        toMarker.style.display = 'none';
-                    } else {
-                        toMarker.style.display = '';
-                    }
+                    const target = (!isSelected && selectedTerminals.has(wire.to)) ? 'none' : '';
+                    if (toMarker.style.display !== target) toMarker.style.display = target;
                 }
             });
-            
-            // Поднимаем маркеры выделенного провода наверх (на всякий случай)
-            const selFrom = document.getElementById(`marker_${selectedWireId}_from`);
-            const selTo = document.getElementById(`marker_${selectedWireId}_to`);
-            if (selFrom) layer.appendChild(selFrom);
-            if (selTo) layer.appendChild(selTo);
         }
-    } else {
-        // Нет выделения — все маркеры видимы
-        Array.from(layer.children).forEach(el => {
-            el.style.display = '';
-        });
     }
 },
     
@@ -6109,6 +6575,7 @@ class DinRailSelectorUI {
                 
 
                 <button id="add-din-rail-btn" class="v2-add-btn">Добавить рейку(и)</button>
+                <button id="create-shield-btn" class="v2-add-btn" style="margin-top:8px; background:#8e44ad;">🏗️ Создать щит</button>
                 <button id="remove-all-rails-btn" class="sidebar-btn" style="margin-top:8px; background:#e74c3c;">Удалить все рейки</button>
             </div>
         `;
@@ -6117,33 +6584,48 @@ class DinRailSelectorUI {
     attachEvents() {
         const modeSelect = document.getElementById('din-rail-mode-select');
         const singleOpts = document.getElementById('din-rail-single-options');
-        const presetOpts = document.getElementById('din-rail-preset-options');
+        const presetOpts = document.getElementById('din-rail-preset-options'); // может отсутствовать
         const addBtn = document.getElementById('add-din-rail-btn');
         const removeAllBtn = document.getElementById('remove-all-rails-btn');
 
+        if (!modeSelect || !addBtn || !removeAllBtn) {
+            console.error('DinRailSelectorUI: не найдены ключевые элементы UI');
+            return;
+        }
+
         modeSelect.addEventListener('change', () => {
             const isPreset = modeSelect.value === 'preset';
-            singleOpts.style.display = isPreset ? 'none' : 'block';
-            presetOpts.style.display = isPreset ? 'block' : 'none';
+            if (singleOpts) singleOpts.style.display = isPreset ? 'none' : 'block';
+            if (presetOpts) presetOpts.style.display = isPreset ? 'block' : 'none';
         });
 
         addBtn.addEventListener('click', () => {
-    const mode = modeSelect.value;
-    if (mode === 'single') {
-        const modulesCount = parseInt(document.getElementById('din-rail-modules-count').value);
-        Actions.createRail(modulesCount);
-    } else {
-        const columns = parseInt(document.getElementById('din-rail-columns').value);
-        const rows = parseInt(document.getElementById('din-rail-rows').value);
-        const modulesPerRow = parseInt(document.getElementById('din-rail-preset-modules').value);
-        this.dinRailManager.addPresetRails(columns, rows, modulesPerRow);
-    }
-});
+            const mode = modeSelect.value;
+            if (mode === 'single') {
+                const modulesCount = parseInt(document.getElementById('din-rail-modules-count').value, 10);
+                Actions.createRail(modulesCount);
+            } else {
+                // Режим preset пока не реализован в разметке — защищаемся.
+                if (typeof this.dinRailManager.addPresetRails !== 'function') {
+                    console.warn('DinRailSelectorUI: режим "preset" не поддерживается');
+                    return;
+                }
+                const columns = parseInt(document.getElementById('din-rail-columns')?.value, 10);
+                const rows = parseInt(document.getElementById('din-rail-rows')?.value, 10);
+                const modulesPerRow = parseInt(document.getElementById('din-rail-preset-modules')?.value, 10);
+                this.dinRailManager.addPresetRails(columns, rows, modulesPerRow);
+            }
+        });
 
         removeAllBtn.addEventListener('click', () => {
             if (confirm('Удалить все рейки? Модули останутся на рабочей области.')) {
                 this.dinRailManager.deleteAllRails();
             }
+        });
+
+        const shieldBtn = document.getElementById('create-shield-btn');
+        shieldBtn?.addEventListener('click', () => {
+            if (window.ShieldGeneratorUI) ShieldGeneratorUI.open();
         });
     }
 }
@@ -7889,10 +8371,18 @@ const App = {
             this._initSelectors();
             this._initProjectIO(); 
             this._initialRefresh();
+            this._initAutoSave();
         } catch (err) {
             console.error('App.init() failed:', err);
             alert('Ошибка инициализации приложения. Подробности в консоли.');
         }
+    },
+    
+    _initAutoSave() {
+        AutoSaveManager.init();
+        // Предлагаем восстановить черновик после полной инициализации.
+        // Небольшая задержка — чтобы Toast и прочий UI уже были готовы.
+        setTimeout(() => ProjectIO.offerDraftRestore(), 100);
     },
     
     _initManagers() {
@@ -7933,6 +8423,7 @@ const App = {
         // Прокидываем в window для inline-обработчиков в HTML (onclick="LayersUI.add()" и т.п.)
         window.LayersUI = LayersUI;
         window.FavoritesUI = FavoritesUI;
+        window.WireMarkerManager = WireMarkerManager;
     },
     
     _initSelectors() {
@@ -8141,6 +8632,9 @@ const ProjectIO = {
             // Имя файла = безопасное имя проекта
             const filename = this._sanitizeFilename(projectName);
             downloadJSON(projectData, filename);
+            
+            // Изменения сохранены в файл — снимаем флаг "несохранённое"
+            window.AutoSaveManager?.markSaved();
             
             // Закрываем модалку только при успехе
             modal.classList.remove('active');
@@ -8437,6 +8931,11 @@ const ProjectIO = {
         
         // НОВОЕ: предложить импорт избранного, если оно есть в файле
         this._maybeOfferFavoritesImport(projectData);
+        
+        // Загруженный из файла проект = актуальное состояние, не "грязное".
+        // Сразу сохраняем как черновик, чтобы при F5 восстановилось именно оно.
+        window.AutoSaveManager?.markSaved();
+        window.AutoSaveManager?.flush();
     },
     _applyView(view) {
         if (!view) return;
@@ -8674,64 +9173,46 @@ const ProjectIO = {
 
     //-----------провода------------
     _applyWires(wires) {
-        if (!Array.isArray(wires)) return;
+    if (!Array.isArray(wires)) return;
+    
+    let maxIdNum = -1;
+    let skipped = 0;
+    
+    wires.forEach(savedWire => {
+        const fromTerm = moduleManagerV2.terminals.get(savedWire.from);
+        const toTerm   = moduleManagerV2.terminals.get(savedWire.to);
+        if (!fromTerm || !toTerm) { skipped++; return; }
         
-        let maxIdNum = -1;
-        let skipped = 0;
+        const wire = JSON.parse(JSON.stringify(savedWire));
+        wiringManagerV2.wires.push(wire);
         
-        wires.forEach(savedWire => {
-            // Проверяем, что обе клеммы существуют после восстановления модулей
-            const fromTerm = moduleManagerV2.terminals.get(savedWire.from);
-            const toTerm   = moduleManagerV2.terminals.get(savedWire.to);
-            
-            if (!fromTerm || !toTerm) {
-                console.warn(
-                    `ProjectIO._applyWires: пропускаем провод ${savedWire.id}: ` +
-                    `клемма ${!fromTerm ? savedWire.from : savedWire.to} не найдена`
-                );
-                skipped++;
-                return;
-            }
-            
-            // Глубокая копия — на случай, если объект ещё где-то используется
-            const wire = JSON.parse(JSON.stringify(savedWire));
-            
-            // Кладём провод в массив менеджера
-            wiringManagerV2.wires.push(wire);
-            
-            // Окрашиваем клеммы (как это делает живой движок при создании провода)
-            if (typeof wiringManagerV2.updateTerminalColor === 'function') {
-                try {
-                    wiringManagerV2.updateTerminalColor(wire.from, wire.color);
-                    wiringManagerV2.updateTerminalColor(wire.to,   wire.color);
-                } catch (err) {
-                    console.warn(`ProjectIO: updateTerminalColor для ${wire.id}:`, err);
-                }
-            }
-            
-            // Отслеживаем номер ID
-            const m = /wire_v2_(\d+)/.exec(wire.id);
-            if (m) maxIdNum = Math.max(maxIdNum, parseInt(m[1], 10));
-        });
-        
-        // Сдвигаем счётчик, чтобы новые провода не конфликтовали
-        if (maxIdNum >= 0) {
-            wiringManagerV2.nextId = Math.max(wiringManagerV2.nextId || 0, maxIdNum + 1);
-        }
-        
-        // Отрисовываем все провода разом из их сохранённых breakpoints
+        // НЕ красим клеммы поштучно здесь — сделаем в конце
+        const m = /wire_v2_(\d+)/.exec(wire.id);
+        if (m) maxIdNum = Math.max(maxIdNum, parseInt(m[1], 10));
+    });
+    
+    if (maxIdNum >= 0) {
+        wiringManagerV2.nextId = Math.max(wiringManagerV2.nextId || 0, maxIdNum + 1);
+    }
+    
+    // Один проход покраски клемм
+    wiringManagerV2.wires.forEach(wire => {
         try {
-            wiringManagerV2.renderWires();
-            WireMarkerManager.syncCounterFromWires();
-        } catch (err) {
-            console.error('ProjectIO._applyWires: ошибка renderWires:', err);
-            throw err;
-        }
-        
-        if (skipped > 0) {
-            console.warn(`ProjectIO._applyWires: пропущено ${skipped} проводов из-за отсутствующих клемм`);
-        }
-    },
+            wiringManagerV2.updateTerminalColor(wire.from, wire.color);
+            wiringManagerV2.updateTerminalColor(wire.to, wire.color);
+        } catch (err) {}
+    });
+    
+    // ОДИН рендер в самом конце
+    wiringManagerV2.invalidateTerminalCache();
+    wiringManagerV2.invalidateWireIndex();
+    wiringManagerV2.renderWires();
+    WireMarkerManager.syncCounterFromWires();
+    
+    if (skipped > 0) {
+        console.warn(`ProjectIO._applyWires: пропущено ${skipped} проводов`);
+    }
+},
     _finalizeApply(projectData) {
         // Восстанавливаем активный слой
         const activeId = projectData.activeLayerId || 'default';
@@ -8742,6 +9223,49 @@ const ProjectIO = {
         // Финальные обновления UI
         if (typeof updateEstimateDebounced === 'function') {
             updateEstimateDebounced();
+        }
+    },
+
+    /**
+     * Предлагает восстановить черновик автосохранения, если он есть.
+     * Вызывается один раз при старте приложения.
+     */
+    offerDraftRestore() {
+        const draft = window.AutoSaveManager?.getDraft();
+        if (!draft) return;
+
+        const when = new Date(draft.savedAt).toLocaleString();
+        const restore = confirm(
+            `Найден несохранённый черновик от ${when}.\n\n` +
+            `Восстановить его?\n\n` +
+            `ОК — восстановить, Отмена — начать с чистого листа.`
+        );
+
+        if (!restore) {
+            AutoSaveManager.clear();
+            return;
+        }
+
+        // Валидируем черновик тем же валидатором, что и файлы проектов
+        const result = ProjectValidator.validate(draft.data);
+        if (!result.ok) {
+            console.warn('ProjectIO.offerDraftRestore: черновик не прошёл валидацию:', result.error);
+            window.Toast?.show('Черновик повреждён, восстановление невозможно', 'error');
+            AutoSaveManager.clear();
+            return;
+        }
+
+        try {
+            this._clearScene();
+            this._applyProject(result.data, '(автосохранение)');
+            window.Toast?.show('Черновик восстановлен', 'success');
+            // Черновик НЕ чистим — пусть остаётся как страховка.
+            // Но помечаем как dirty, чтобы beforeunload предупредил, если не сохранят в файл.
+            window.AutoSaveManager?.markDirty();
+        } catch (err) {
+            console.error('ProjectIO.offerDraftRestore: ошибка восстановления:', err);
+            window.Toast?.show('Не удалось восстановить черновик', 'error');
+            AutoSaveManager.clear();
         }
     },
 };
@@ -9050,40 +9574,7 @@ const ProjectSerializer = {
     async execute() {
         throw new Error(`${this.constructor.name}.execute() not implemented`);
     }
-/**
-     * Положить уже выполненную команду в стек undo.
-     * Используется, когда состояние уже применено пользователем
-     * (например, drag — изменения видны на экране в реальном времени,
-     * команду создаём только в момент mouseup для записи в историю).
-     *
-     * НЕ вызывает command.execute() и НЕ применяет команду повторно.
-     * Применяет merge-логику и сбрасывает redo, как exec().
-     *
-     * @param {Command} command
-     */
-    push(command) {
-        if (!(command instanceof Command)) {
-            console.error('HistoryManager.push: ожидается экземпляр Command', command);
-            return;
-        }
-        if (this._isApplying) {
-            console.warn('HistoryManager.push: попытка push во время применения, проигнорировано');
-            return;
-        }
-        
-        const previous = this._undoStack[this._undoStack.length - 1];
-        const merged = previous && command.mergeWith(previous);
-        
-        if (!merged) {
-            this._undoStack.push(command);
-            while (this._undoStack.length > this._maxSize) {
-                this._undoStack.shift();
-            }
-        }
-        
-        this._redoStack = [];
-        this._notify();
-    }
+
     /**
      * Откатить команду.
      * @returns {void|Promise<void>}
@@ -9095,7 +9586,7 @@ const ProjectSerializer = {
     /**
      * Опциональная склейка с предыдущей командой того же типа.
      * Используется только для непрерывных жестов (drag, slider).
-     * 
+     *
      * @param {Command} previous - последняя команда в стеке undo
      * @returns {boolean} true, если merge произошёл (текущая команда
      *   не добавляется в стек, а изменяет previous)
@@ -9216,6 +9707,7 @@ const HistoryManager = {
 
             // Любое новое действие сбрасывает redo
             this._redoStack = [];
+            window.AutoSaveManager?.markDirty();
         } catch (err) {
             console.error('HistoryManager.exec failed:', err);
             // Команда могла частично применить изменения — но мы её
@@ -9247,6 +9739,7 @@ push(command) {
         }
         
         this._redoStack = [];
+        window.AutoSaveManager?.markDirty();
         this._notify();
     },
     /**
@@ -9263,6 +9756,7 @@ push(command) {
             while (this._redoStack.length > this._maxSize) {
                 this._redoStack.shift();
             }
+            window.AutoSaveManager?.markDirty();
 
             if (window.Toast) {
                 Toast.show(`Отменено: ${command.description}`, 'info');
@@ -9293,6 +9787,7 @@ push(command) {
             while (this._undoStack.length > this._maxSize) {
                 this._undoStack.shift();
             }
+            window.AutoSaveManager?.markDirty();
 
             if (window.Toast) {
                 Toast.show(`Возвращено: ${command.description}`, 'info');
@@ -10054,6 +10549,12 @@ class DeleteWireCommand extends Command {
             this._snapshot = wiringManagerV2.serializeWire(this._wireId);
             if (!this._snapshot) throw new Error(`Провод ${this._wireId} не найден`);
         }
+        // Сбрасываем выделение, если удаляем выбранный провод —
+        // иначе остаётся "призрак" в selectedWireId и маркеры/подсветка
+        // ведут себя неверно при последующих рендерах.
+        if (wiringManagerV2.selectedWireId === this._snapshot.id) {
+            wiringManagerV2.selectedWireId = null;
+        }
         wiringManagerV2.deleteWire(this._snapshot.id);
     }
     
@@ -10413,13 +10914,13 @@ class CreateWireCommand extends Command {
     get description() { return 'Создать провод'; }
     
     async execute() {
-        if (this._snapshot) {
-            // redo — восстанавливаем по снимку
-            const wire = wiringManagerV2.recreateWire(this._snapshot);
-            if (!wire) throw new Error('Не удалось воссоздать провод (redo)');
-            if (tagManagerV2) tagManagerV2.updateAllTags();
-            return;
-        }
+    if (this._snapshot) {
+        const wire = wiringManagerV2.recreateWire(this._snapshot, { deferRender: true });
+        if (!wire) throw new Error('Не удалось воссоздать провод (redo)');
+        wiringManagerV2.renderSingleWire(this._snapshot.id);
+        if (tagManagerV2) tagManagerV2.updateAllTags();
+        return;
+    }
         
         // Первое выполнение — создаём провод "руками"
         const fromEl = document.getElementById(this._spec.fromTerminalId);
@@ -10466,6 +10967,7 @@ class CreateWireCommand extends Command {
         WireMarkerManager.assignNumber(wire);
         wiringManagerV2.wires.push(wire);
         wiringManagerV2.invalidateTerminalCache();
+        wiringManagerV2.invalidateWireIndex();
         
         wiringManagerV2.updateTerminalColor(wire.from, wire.color);
         wiringManagerV2.updateTerminalColor(wire.to,   wire.color);
@@ -10486,9 +10988,20 @@ class CreateWireCommand extends Command {
                 tagManagerV2.setTag(wire.to, fromTag);
             }
             tagManagerV2.propagateTag(wire.to);
+        } else if (fromType === 'in' && toType === 'in') {
+            // IN → IN: тег источника (from, выбран первым) переносим на приёмник (to),
+            // если приёмник универсален или совместим по группе. Затем разгоняем
+            // по internalConnections и дальше по цепочке.
+            const currentTag = toEl.dataset.tag;
+            const targetIsUniversal = (currentTag === 'L/N' || currentTag === 'All');
+            const compatible = tagManagerV2.areCompatible(fromTag, currentTag, 'wire');
+            if (targetIsUniversal || compatible) {
+                tagManagerV2.setTag(wire.to, fromTag);
+            }
+            tagManagerV2.propagateTag(wire.to);
         }
         
-        wiringManagerV2.renderWires();
+        wiringManagerV2.renderSingleWire(wire.id);
         
         // Снимок для будущего undo/redo
         this._snapshot = wiringManagerV2.serializeWire(wire.id);
@@ -10552,7 +11065,7 @@ class ModifyWireCommand extends Command {
             wiringManagerV2.updateTerminalColor(wire.to,   wire.color);
         }
         
-        wiringManagerV2.renderWires();
+        wiringManagerV2.renderSingleWire(this._wireId);
         this._after = wiringManagerV2.serializeWire(this._wireId);
     }
     
@@ -10571,7 +11084,7 @@ class ModifyWireCommand extends Command {
         Object.assign(wire, JSON.parse(JSON.stringify(snap)));
         wiringManagerV2.updateTerminalColor(wire.from, wire.color);
         wiringManagerV2.updateTerminalColor(wire.to,   wire.color);
-        wiringManagerV2.renderWires();
+        wiringManagerV2.renderSingleWire(wire.id);
     }
     
     /**
@@ -10629,7 +11142,7 @@ class ChangeWireRouteCommand extends Command {
         if (fromEl && toEl) {
             wire.breakpoints = wiringManagerV2.calculateBreakpoints(fromEl, toEl, wire);
         }
-        wiringManagerV2.renderWires();
+        wiringManagerV2.renderSingleWire(this._wireId);
         
         this._after = wiringManagerV2.serializeWire(this._wireId);
     }
@@ -10643,7 +11156,7 @@ class ChangeWireRouteCommand extends Command {
         const wire = wiringManagerV2.wires.find(w => w.id === snap.id);
         if (!wire) return;
         Object.assign(wire, JSON.parse(JSON.stringify(snap)));
-        wiringManagerV2.renderWires();
+        wiringManagerV2.renderSingleWire(wire.id);
     }
 }
 
@@ -10708,6 +11221,7 @@ class ReconnectWireCommand extends Command {
         
         // Применяем
         wire[this._endpoint] = this._newTerminalId;
+        wiringManagerV2.invalidateWireIndex();
         const fromEl = document.getElementById(wire.from);
         const toEl   = document.getElementById(wire.to);
         if (fromEl && toEl) {
@@ -10741,6 +11255,7 @@ class ReconnectWireCommand extends Command {
         Object.assign(wire, JSON.parse(JSON.stringify(snap)));
         
         wiringManagerV2.invalidateTerminalCache();
+        wiringManagerV2.invalidateWireIndex();
         // Перекрашиваем все четыре клеммы (две старые, две новые)
         // resetTerminalColor сам разрулит, осталось ли на клемме что-то
         if (oldFrom !== wire.from) wiringManagerV2.resetTerminalColor(oldFrom);
@@ -10760,6 +11275,84 @@ window.ChangeWireRouteCommand = ChangeWireRouteCommand;
 window.ReconnectWireCommand   = ReconnectWireCommand;
 
 console.log('[Undo/Redo] Команды для проводов (этап 2C) зарегистрированы');
+
+/* ╔══════════════════════════════════════════════════════════════════════╗
+   ║  52.7 БЛОК: CreateShieldCommand — генератор щита (массив реек)        ║
+   ║  ⚠️  Создаёт N реек по рассчитанным координатам как ОДНО действие.   ║
+   ║     Шины N пока не создаются (TODO: когда появятся модули-шины).     ║
+   ╚══════════════════════════════════════════════════════════════════════╝ */
+class CreateShieldCommand extends Command {
+    /**
+     * @param {Array<{x:number,y:number,modulesPerRow:number}>} railSpecs
+     */
+    constructor(railSpecs) {
+        super();
+        if (!Array.isArray(railSpecs) || railSpecs.length === 0) {
+            throw new Error('CreateShieldCommand: пустой список реек');
+        }
+        this._railSpecs = railSpecs;
+        // Снимки созданных реек — для повторного execute (redo) и undo.
+        this._railSnapshots = null;
+    }
+
+    get description() {
+        return `Создать щит (${this._railSpecs.length} реек)`;
+    }
+
+    async execute() {
+        if (this._railSnapshots) {
+            // redo — воссоздаём по уже зафиксированным снимкам (те же ID)
+            this._railSnapshots.forEach(snap => {
+                dinRailManagerV2.recreateRail(snap, { deferGuides: true });
+            });
+        } else {
+            // Первый запуск — генерируем ID и создаём рейки
+            this._railSnapshots = [];
+            const baseId = dinRailManagerV2.nextId;
+            const activeLayer = window.LayersUI ? LayersUI.getActiveId() : 'default';
+
+            this._railSpecs.forEach((spec, i) => {
+                const snap = {
+                    id: `rail_v2_${baseId + i}`,
+                    x: spec.x,
+                    y: spec.y,
+                    widthPx: spec.modulesPerRow * APP_CONFIG.MODULE_UNIT_WIDTH
+                             + 2 * APP_CONFIG.RAIL_SIDE_PADDING,
+                    modulesPerRow: spec.modulesPerRow,
+                    layerId: activeLayer,
+                };
+                dinRailManagerV2.recreateRail(snap, { deferGuides: true });
+                this._railSnapshots.push(snap);
+            });
+
+            // Сдвигаем счётчик за пределы созданных
+            dinRailManagerV2.nextId = baseId + this._railSpecs.length;
+        }
+
+        // Одно обновление направляющих и проводов на всё
+        dinRailManagerV2.guideLineManager.updateFromRails();
+        if (window.wiringManagerV2) {
+            wiringManagerV2.invalidateTerminalCache();
+            wiringManagerV2.updateAllWires();
+        }
+    }
+
+    async undo() {
+        if (!this._railSnapshots) return;
+        // Рейки создавались пустыми (без модулей) — удаляем тихо
+        this._railSnapshots.forEach(snap => {
+            dinRailManagerV2.removeRail(snap.id);
+        });
+        dinRailManagerV2.guideLineManager.updateFromRails();
+        if (window.wiringManagerV2) {
+            wiringManagerV2.invalidateTerminalCache();
+            wiringManagerV2.updateAllWires();
+        }
+    }
+}
+window.CreateShieldCommand = CreateShieldCommand;
+
+console.log('[Shield] CreateShieldCommand зарегистрирован');
 /* ╔══════════════════════════════════════════════════════════════════════╗
    ║  53. БЛОК: Actions (фасад действий приложения) — реализация          ║
    ╚══════════════════════════════════════════════════════════════════════╝ */
@@ -11477,11 +12070,38 @@ class PasteCommand extends Command {
     }
     
     async _applySnapshots(snapshots) {
-        SelectionManager.clearAll();
-        
-        // Порядок: рейки → модули на рейках → свободные модули → провода
+    SelectionManager.clearAll();
+
+    // ─── 1. Прогрев кэша изображений ───
+    const imagePaths = new Set();
+    const allModuleSnaps = [
+        ...snapshots.modules,
+        ...snapshots.rails.flatMap(r => r.modules),
+    ];
+    allModuleSnaps.forEach(m => {
+        const cfg = MODULE_DATABASE_V2?.[m.brand]?.[m.series]?.[m.type];
+        if (!cfg) return;
+        if (cfg.visual?.bgImage) imagePaths.add(cfg.visual.bgImage);
+        Object.values(cfg.variants || {}).forEach(v => {
+            if (v?.bgImage) imagePaths.add(v.bgImage);
+        });
+    });
+    if (imagePaths.size > 0) {
+        await Promise.all(
+            Array.from(imagePaths).map(p => moduleManagerV2.loadImage(p))
+        );
+    }
+
+    // ─── 2. ГЛУШИМ updateAllWires на время вставки ───
+    // snapModuleToRail вызывает updateAllWires() на каждом модуле —
+    // это O(N²) и убивает производительность. Подменяем на no-op.
+    const realUpdateAllWires = wiringManagerV2.updateAllWires;
+    wiringManagerV2.updateAllWires = function () {};
+
+    try {
+        // ─── 3. Рейки + модули ───
         for (const r of snapshots.rails) {
-            dinRailManagerV2.recreateRail(r.rail);
+            dinRailManagerV2.recreateRail(r.rail, { deferGuides: true });
             for (const m of r.modules) {
                 await moduleManagerV2.recreateModule(m);
             }
@@ -11489,21 +12109,309 @@ class PasteCommand extends Command {
         for (const m of snapshots.modules) {
             await moduleManagerV2.recreateModule(m);
         }
+
+        // ─── 4. Провода (без рендера в цикле) ───
         snapshots.wires.forEach(s => {
-            const wire = wiringManagerV2.recreateWire(s);
-            // Назначаем новый номер маркера
+            const wire = wiringManagerV2.recreateWire(s, { deferRender: true });
             if (wire) WireMarkerManager.assignNumber(wire);
         });
-        
-        wiringManagerV2.invalidateTerminalCache();
-        wiringManagerV2.renderWires();
-        if (tagManagerV2) tagManagerV2.updateAllTags();
-        updateAllTagsDebounced();
-        updateEstimateDebounced();
+    } finally {
+        // Возвращаем настоящий метод
+        wiringManagerV2.updateAllWires = realUpdateAllWires;
     }
+
+    // ─── 5. ВАЖНО: ждём reflow перед расчётом координат ───
+    // Без этого getBoundingClientRect() вернёт нули для свежих модулей.
+    await new Promise(requestAnimationFrame);
+
+    // ─── 6. Финальный пересчёт и рендер ───
+    wiringManagerV2.invalidateTerminalCache();
+
+    // Пересчитываем breakpoints для всех вставленных проводов
+    // (их концы теперь в правильных позициях)
+    const insertedWireIds = new Set(snapshots.wires.map(w => w.id));
+    wiringManagerV2.wires.forEach(wire => {
+        if (!insertedWireIds.has(wire.id)) return;
+        const fromEl = document.getElementById(wire.from);
+        const toEl   = document.getElementById(wire.to);
+        if (fromEl && toEl) {
+            wire.breakpoints = wiringManagerV2.calculateBreakpoints(fromEl, toEl, wire);
+        }
+    });
+
+    wiringManagerV2.renderWires();
+    dinRailManagerV2.guideLineManager.updateFromRails();
+
+    if (typeof updateAllTagsDebounced === 'function') updateAllTagsDebounced();
+    if (typeof updateEstimateDebounced === 'function') updateEstimateDebounced();
+}
 }
 
 window.PasteCommand = PasteCommand;
+
+/* ╔══════════════════════════════════════════════════════════════════════╗
+   ║  56. autosave-manager.js — Автосохранение черновика в localStorage   ║
+   ╚══════════════════════════════════════════════════════════════════════╝ */
+const AutoSaveManager = {
+    STORAGE_KEY: 'din_project_autosave_v1',
+    DEBOUNCE_MS: 2000,
+    MAX_AGE_MS: 7 * 24 * 60 * 60 * 1000,   // 7 дней
+
+    _timer: null,
+    _enabled: false,
+    _dirty: false,
+    _indicatorTimer: null,
+
+    init() {
+        this._enabled = true;
+
+        // Предупреждение при закрытии вкладки с несохранёнными изменениями
+        window.addEventListener('beforeunload', (e) => {
+            if (this._dirty) {
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            }
+        });
+
+        console.log('[AutoSave] инициализирован');
+    },
+
+    /** Пометить как изменённый и запланировать сохранение. */
+    markDirty() {
+        if (!this._enabled) return;
+        this._dirty = true;
+        if (this._timer) clearTimeout(this._timer);
+        this._timer = setTimeout(() => this._save(), this.DEBOUNCE_MS);
+    },
+
+    /** @private непосредственно пишет в localStorage */
+    _save() {
+        this._timer = null;
+        try {
+            const projectData = ProjectSerializer.extract({
+                projectName: 'Автосохранение',
+                includeFavorites: false,   // избранное и так хранится отдельно
+            });
+            const payload = {
+                version: 1,
+                savedAt: Date.now(),
+                data: projectData,
+            };
+            localStorage.setItem(this.STORAGE_KEY, JSON.stringify(payload));
+            this._showIndicator();
+        } catch (err) {
+            console.error('[AutoSave] ошибка сохранения:', err);
+            // QuotaExceededError на больших проектах — просто пропускаем цикл
+        }
+    },
+
+    /** Сохранить немедленно (без ожидания debounce). */
+    flush() {
+        if (!this._enabled) return;
+        if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+        this._save();
+    },
+
+    /** Вернуть черновик или null (нет / повреждён / устарел). */
+    getDraft() {
+        try {
+            const raw = localStorage.getItem(this.STORAGE_KEY);
+            if (!raw) return null;
+            const payload = JSON.parse(raw);
+            if (!payload || !payload.data) return null;
+            if (Date.now() - payload.savedAt > this.MAX_AGE_MS) {
+                this.clear();
+                return null;
+            }
+            return payload;
+        } catch (err) {
+            console.warn('[AutoSave] повреждённый черновик, удаляю:', err);
+            this.clear();
+            return null;
+        }
+    },
+
+    /** Удалить черновик и снять флаг изменений. */
+    clear() {
+        try { localStorage.removeItem(this.STORAGE_KEY); } catch (e) {}
+        this._dirty = false;
+        if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+    },
+
+    /** Снять флаг "несохранённые изменения" (после явного сохранения в файл). */
+    markSaved() {
+        this._dirty = false;
+    },
+
+    /** @private мягкий индикатор */
+    _showIndicator() {
+        const el = document.getElementById('autosave-indicator');
+        if (!el) return;
+        el.textContent = '✓ черновик сохранён';
+        el.classList.add('visible');
+        clearTimeout(this._indicatorTimer);
+        this._indicatorTimer = setTimeout(() => {
+            el.classList.remove('visible');
+        }, 1500);
+    },
+};
+window.AutoSaveManager = AutoSaveManager;
+
+/* ╔══════════════════════════════════════════════════════════════════════╗
+   ║  57. shield-generator-ui.js — Генератор щита (модалка + калькулятор)  ║
+   ║  ⚠️  Превращает параметры (колонки×ряды) в массив координат реек     ║
+   ║     и создаёт их через CreateShieldCommand (одно Undo).              ║
+   ╚══════════════════════════════════════════════════════════════════════╝ */
+const ShieldGeneratorUI = {
+    _modalId: 'shieldGeneratorModal',
+
+    open() {
+        const modal = document.getElementById(this._modalId);
+        if (!modal) {
+            console.error('ShieldGeneratorUI: модалка не найдена');
+            return;
+        }
+        modal.classList.add('active');
+        this._bindLivePreview();
+        this._updatePreview();
+    },
+
+    close() {
+        document.getElementById(this._modalId)?.classList.remove('active');
+    },
+
+    /** @private читает значения из формы */
+    /** @private читает значения из формы с жёстким зажимом в допустимый диапазон */
+    _readConfig() {
+        // Единый источник правды о допустимых пределах.
+        // min/max в HTML — только для спиннеров; реальную защиту даёт этот clamp.
+        const LIMITS = {
+            modulesPerRow: { min: 1,   max: 48,   def: 12 },
+            rowCenterGap:  { min: APP_CONFIG.RAIL_HEIGHT+185, max: 1000, def: 300 },
+            columnGap:     { min: 0,   max: 500,  def: 60 },
+            columnsCount:  { min: 1,   max: 10,   def: 1 },
+            rowsPerColumn: { min: 1,   max: 20,   def: 3 },
+        };
+
+        const read = (id) => {
+            const lim = LIMITS[id.replace('sg-', '')] || { min: 0, max: Infinity, def: 0 };
+            const el = document.getElementById(id);
+            let v = parseInt(el?.value, 10);
+            if (!Number.isFinite(v)) v = lim.def;
+            v = Utils.clamp(v, lim.min, lim.max);
+            // Возвращаем зажатое значение обратно в поле — чтобы пользователь
+            // видел, что ввод скорректирован, а не "молча" применилось другое.
+            if (el && String(v) !== el.value) el.value = v;
+            return v;
+        };
+
+        return {
+            modulesPerRow: read('sg-modulesPerRow'),
+            rowCenterGap:  read('sg-rowCenterGap'),
+            columnGap:     read('sg-columnGap'),
+            columnsCount:  read('sg-columnsCount'),
+            rowsPerColumn: read('sg-rowsPerColumn'),
+        };
+    },
+
+    /**
+     * Калькулятор: параметры → массив реек {x, y, modulesPerRow}.
+     * Координаты в логических координатах workspace.
+     * Вся сетка центрируется относительно центра видимой области.
+     */
+    _calcRailSpecs(cfg) {
+        const railWidth = cfg.modulesPerRow * APP_CONFIG.MODULE_UNIT_WIDTH
+                        + 2 * APP_CONFIG.RAIL_SIDE_PADDING;
+        const railHeight = APP_CONFIG.RAIL_HEIGHT;
+
+        // Полные габариты сетки
+        const totalW = cfg.columnsCount * railWidth
+                     + (cfg.columnsCount - 1) * cfg.columnGap;
+        // Высота: первая рейка занимает railHeight, каждая следующая смещена
+        // на rowCenterGap. Итоговая высота = (rows-1)*gap + railHeight.
+        const totalH = (cfg.rowsPerColumn - 1) * cfg.rowCenterGap + railHeight;
+
+        // Центр видимой области экрана в логических координатах
+        const vp = document.getElementById('viewport');
+        const rect = vp.getBoundingClientRect();
+        const center = getLogicalCoords(
+            rect.left + rect.width / 2,
+            rect.top  + rect.height / 2
+        );
+
+        // Левый-верхний угол сетки, чтобы центр совпал с центром экрана
+        let originX = center.x - totalW / 2;
+        let originY = center.y - totalH / 2;
+
+        // Прижимаем к сетке привязки
+        originX = Math.round(originX / APP_CONFIG.SPAWN_GRID_SIZE) * APP_CONFIG.SPAWN_GRID_SIZE;
+        originY = Math.round(originY / APP_CONFIG.SPAWN_GRID_SIZE) * APP_CONFIG.SPAWN_GRID_SIZE;
+
+        const specs = [];
+        for (let c = 0; c < cfg.columnsCount; c++) {
+            const x = originX + c * (railWidth + cfg.columnGap);
+            for (let r = 0; r < cfg.rowsPerColumn; r++) {
+                const y = originY + r * cfg.rowCenterGap;
+                specs.push({ x, y, modulesPerRow: cfg.modulesPerRow });
+            }
+        }
+        return specs;
+    },
+
+    /** @private навешивает live-обновление превью (один раз) */
+    _bindLivePreview() {
+        if (this._bound) return;
+        this._bound = true;
+        ['sg-modulesPerRow', 'sg-rowCenterGap', 'sg-columnGap',
+         'sg-columnsCount', 'sg-rowsPerColumn'].forEach(id => {
+            const el = document.getElementById(id);
+            el?.addEventListener('input', () => this._updatePreview());
+        });
+    },
+
+    _updatePreview() {
+        const cfg = this._readConfig();
+        const total = cfg.columnsCount * cfg.rowsPerColumn;
+        const railWidth = cfg.modulesPerRow * APP_CONFIG.MODULE_UNIT_WIDTH
+                        + 2 * APP_CONFIG.RAIL_SIDE_PADDING;
+        const el = document.getElementById('sg-preview-text');
+        if (el) {
+            el.innerHTML =
+                `Будет создано <b>${total}</b> реек ` +
+                `(${cfg.columnsCount} × ${cfg.rowsPerColumn}).<br>` +
+                `Ширина рейки: <b>${railWidth}px</b> ` +
+                `(${cfg.modulesPerRow} мод. × ${APP_CONFIG.MODULE_UNIT_WIDTH}px + поля).`;
+        }
+    },
+
+    async confirm() {
+        const cfg = this._readConfig();
+        const specs = this._calcRailSpecs(cfg);
+
+        if (specs.length === 0) {
+            window.Toast?.show('Нечего создавать', 'warning');
+            return;
+        }
+        // Разумный предел, чтобы случайно не наплодить тысячи реек
+        if (specs.length > 100) {
+            if (!confirm(`Будет создано ${specs.length} реек. Продолжить?`)) return;
+        }
+
+        try {
+            await HistoryManager.exec(new CreateShieldCommand(specs));
+            window.Toast?.show(`Щит создан: ${specs.length} реек`, 'success');
+            this.close();
+        } catch (err) {
+            console.error('ShieldGeneratorUI.confirm:', err);
+            window.Toast?.show('Не удалось создать щит', 'error');
+        }
+    },
+};
+window.ShieldGeneratorUI = ShieldGeneratorUI;
+
+console.log('[Shield] ShieldGeneratorUI зарегистрирован');
+
 /* ╔══════════════════════════════════════════════════════════════════════╗
    ║                  ════ КОНЕЦ ИСХОДНОГО КОДА ════                      ║
    ║  ──────────────────────────────────────────────────────────────────  ║
@@ -11572,7 +12480,7 @@ window.PasteCommand = PasteCommand;
    ║  💡 Совет: используйте Ctrl+F с номером блока ("28.") для быстрой    ║
    ║     навигации между разделами.                                       ║
    ╚══════════════════════════════════════════════════════════════════════╝ */
-
 </script>
+<div id="autosave-indicator"></div>
 </body>
 </html>
