@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.9</title>
+    <title>Конструктор Щита v4.13.10</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -1317,7 +1317,7 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
 </div>
 <div class="tool-row" style="margin-top: 8px;">
     <button class="sidebar-btn" style="width:100%; background:#8e44ad;" 
-            onclick="WireMarkerManager.renumberAll()">
+            onclick="renumberAllMarkers()">
         🔢 Пересчитать маркеры
     </button>
 </div>
@@ -3185,6 +3185,7 @@ registerSupplyTerminals() {
         // Сохраняем в params для последующего использования (например, при клонировании)
         config.params.labelText = e.target.value;
         div.dataset.label = e.target.value;
+        window.AutoSaveManager?.markDirty();
     });
     
     // Блокируем всплытие, чтобы не начиналось перетаскивание модуля при клике на поле
@@ -8036,6 +8037,7 @@ async function generateProfessionalPDF() {
     const markersLayer = document.getElementById('markers-layer');
     const guideLayer   = document.getElementById('guide-layer');
     let needsRestore = false;
+    let labelStubs = [];   // подменённые маркеры модулей (input → div) на время захвата
 
     try {
         const projName = Utils.getEl('pdfProjectName').value || 'Проект электрощита';
@@ -8186,6 +8188,50 @@ async function generateProfessionalPDF() {
         document.body.style.overflow = 'visible';
         document.documentElement.style.overflow = 'visible';
 
+        // 6.5 Маркеры модулей — это <input>, а html2canvas не умеет надёжно
+        //     рисовать текст внутри input. Поэтому на время захвата подменяем
+        //     каждый input на <div> с тем же текстом и видом. Откат — в finally.
+        document.querySelectorAll('.module-v2 input.module-label-input').forEach(input => {
+            const val = input.value || '';
+            if (!val) return; // пустые маркеры не рисуем
+
+            const cs   = getComputedStyle(input);
+            const stub = document.createElement('div');
+            stub.textContent           = val;
+            stub.className             = 'module-label-stub';
+            stub.style.position        = 'absolute';
+            stub.style.left            = input.style.left;
+            stub.style.top             = input.style.top;
+            stub.style.width           = input.style.width || cs.width;
+            stub.style.height          = cs.height;
+            stub.style.boxSizing       = 'border-box';
+            stub.style.fontSize        = cs.fontSize;
+            stub.style.fontWeight      = cs.fontWeight;
+            stub.style.fontFamily      = cs.fontFamily;
+            stub.style.color           = cs.color;
+            stub.style.backgroundColor = cs.backgroundColor;
+            stub.style.border          = cs.border;
+            stub.style.borderRadius    = cs.borderRadius;
+            stub.style.padding         = cs.padding;       // тот же padding, что у input
+            stub.style.textAlign       = 'center';
+            stub.style.zIndex          = cs.zIndex;
+            stub.style.pointerEvents   = 'none';
+            stub.style.overflow        = 'hidden';
+            stub.style.whiteSpace      = 'nowrap';
+            // Вертикальное центрирование с учётом padding:
+            // высота текстовой строки = полная высота − верхний и нижний padding.
+            const innerH = parseFloat(cs.height)
+                         - parseFloat(cs.paddingTop)
+                         - parseFloat(cs.paddingBottom)
+                         - parseFloat(cs.borderTopWidth)
+                         - parseFloat(cs.borderBottomWidth);
+            stub.style.lineHeight = innerH + 'px';
+
+            input.style.visibility = 'hidden';
+            input.parentNode.insertBefore(stub, input);
+            labelStubs.push({ input, stub });
+        });
+
         void workspace.offsetWidth;
 
         // 7. Захват
@@ -8247,14 +8293,16 @@ async function generateProfessionalPDF() {
             const tag = termEl.dataset.tag || termEl.dataset.termIndex || '?';
             
             let name = 'Аппарат';
-            const modEl = Utils.getEl(moduleId) || document.querySelector(`[data-module-id="${moduleId}"]`);
+            const modEl = document.querySelector(`[data-module-id="${moduleId}"]`);
             if (modEl) {
-                name = modEl.dataset.name || modEl.getAttribute('title') || 'Аппарат';
-                if (name === 'Аппарат') {
-                    const textEl = modEl.querySelector('span, .module-title');
-                    if (textEl && textEl.innerText) {
-                        name = textEl.innerText.trim();
-                    }
+                // В таблице соединений аппарат обозначаем по маркеру (Q1, Q2…)
+                const marker = window.ModuleMarkerManager
+                    ? ModuleMarkerManager._readLabel(modEl)
+                    : (modEl.dataset.label || '');
+                if (marker) {
+                    name = marker;
+                } else {
+                    name = modEl.dataset.name || modEl.getAttribute('title') || 'Аппарат';
                 }
             }
             return { name, tag };
@@ -8297,6 +8345,13 @@ async function generateProfessionalPDF() {
         // ВОССТАНОВЛЕНИЕ — выполняется ВСЕГДА, даже при ошибке
         if (needsRestore) {
             try {
+                // Возвращаем маркеры: удаляем стабы, показываем input обратно
+                labelStubs.forEach(({ input, stub }) => {
+                    if (stub.parentNode) stub.parentNode.removeChild(stub);
+                    input.style.visibility = '';
+                });
+                labelStubs = [];
+
                 // Восстановление координат модулей и реек
                 movedElements.forEach(({ el, origLeft, origTop }) => {
                     el.style.left = origLeft;
@@ -10475,6 +10530,9 @@ class CreateModuleCommand extends Command {
             el.style.top  = pos.y + 'px';
             workspace.appendChild(el);
             
+            // Автомаркировка (Q1, Q2…) — до снятия снимка, чтобы маркер попал в snapshot
+            window.ModuleMarkerManager?.autoAssign(el.dataset.moduleId);
+            
             this._snapshot = moduleManagerV2.serializeModule(el.dataset.moduleId);
         }
         updateAllTagsDebounced();
@@ -10519,6 +10577,11 @@ class CloneModuleCommand extends Command {
             newEl.style.left = x + 'px';
             newEl.style.top  = y + 'px';
             workspace.appendChild(newEl);
+            
+            // Клон НЕ наследует маркер источника — назначаем следующий по ряду.
+            // createModule скопировал labelText из cfg.params → стираем и переназначаем.
+            window.ModuleMarkerManager?.setLabel(newEl.dataset.moduleId, '');
+            window.ModuleMarkerManager?.autoAssign(newEl.dataset.moduleId);
             
             this._snapshot = moduleManagerV2.serializeModule(newEl.dataset.moduleId);
         }
@@ -12024,26 +12087,33 @@ class PasteCommand extends Command {
                 layerId: LayersUI.getActiveId(),
             };
             
-            // Модули на этой рейке: ID меняем, координаты ОСТАВЛЯЕМ (они локальные)
-            const childSnaps = (this._buffer.railModules.get(r.id) || []).map(m => ({
-                ...JSON.parse(JSON.stringify(m)),
-                id: moduleIdMap.get(m.id),
-                railId: newRailId,
-                isSelected: true,
-            }));
+            // Модули на этой рейке: ID меняем, координаты ОСТАВЛЯЕМ (они локальные).
+            // Маркер очищаем — назначим заново после вставки (продолжение ряда).
+            const childSnaps = (this._buffer.railModules.get(r.id) || []).map(m => {
+                const snap = JSON.parse(JSON.stringify(m));
+                snap.id = moduleIdMap.get(m.id);
+                snap.railId = newRailId;
+                snap.isSelected = true;
+                snap.labelText = '';
+                if (snap.params) snap.params.labelText = '';
+                return snap;
+            });
             
             return { rail: newRailSnap, modules: childSnaps };
         });
         
-        // 5. Свободные модули — со смещением
-        const newModules = this._buffer.modules.map(m => ({
-            ...JSON.parse(JSON.stringify(m)),
-            id: moduleIdMap.get(m.id),
-            x: m.x + dx,
-            y: m.y + dy,
-            railId: null,
-            isSelected: true,
-        }));
+        // 5. Свободные модули — со смещением. Маркер очищаем (назначим после вставки).
+        const newModules = this._buffer.modules.map(m => {
+            const snap = JSON.parse(JSON.stringify(m));
+            snap.id = moduleIdMap.get(m.id);
+            snap.x = m.x + dx;
+            snap.y = m.y + dy;
+            snap.railId = null;
+            snap.isSelected = true;
+            snap.labelText = '';
+            if (snap.params) snap.params.labelText = '';
+            return snap;
+        });
         
         // 6. Провода — переподключаем + смещаем breakpoints + новые номера
         let wireCounter = wiringManagerV2.nextId;
@@ -12141,6 +12211,15 @@ class PasteCommand extends Command {
 
     wiringManagerV2.renderWires();
     dinRailManagerV2.guideLineManager.updateFromRails();
+
+    // Назначаем маркеры вставленным модулям — продолжаем числовой ряд.
+    // Порядок: модули на рейках, затем свободные (стабильный порядок нумерации).
+    if (window.ModuleMarkerManager) {
+        snapshots.rails.forEach(r =>
+            r.modules.forEach(m => ModuleMarkerManager.autoAssign(m.id))
+        );
+        snapshots.modules.forEach(m => ModuleMarkerManager.autoAssign(m.id));
+    }
 
     if (typeof updateAllTagsDebounced === 'function') updateAllTagsDebounced();
     if (typeof updateEstimateDebounced === 'function') updateEstimateDebounced();
@@ -12288,7 +12367,7 @@ const ShieldGeneratorUI = {
         // min/max в HTML — только для спиннеров; реальную защиту даёт этот clamp.
         const LIMITS = {
             modulesPerRow: { min: 1,   max: 48,   def: 12 },
-            rowCenterGap:  { min: APP_CONFIG.RAIL_HEIGHT+185, max: 1000, def: 300 },
+            rowCenterGap:  { min: APP_CONFIG.RAIL_HEIGHT+185, max: 500, def: 300 },
             columnGap:     { min: 0,   max: 500,  def: 60 },
             columnsCount:  { min: 1,   max: 10,   def: 1 },
             rowsPerColumn: { min: 1,   max: 20,   def: 3 },
@@ -12411,6 +12490,214 @@ const ShieldGeneratorUI = {
 window.ShieldGeneratorUI = ShieldGeneratorUI;
 
 console.log('[Shield] ShieldGeneratorUI зарегистрирован');
+
+/* ╔══════════════════════════════════════════════════════════════════════╗
+   ║  58. module-marker-manager.js — Автомаркировка модулей (Q1, Q2…)     ║
+   ║                                                                      ║
+   ║  ⚙️  Чтобы добавить маркировку нового типа — допишите строку в       ║
+   ║      PREFIXES ниже. Тип без префикса не маркируется автоматически.   ║
+   ╚══════════════════════════════════════════════════════════════════════╝ */
+const ModuleMarkerManager = {
+
+    // ─── ЕДИНСТВЕННОЕ место для расширения (пункт 5) ───
+    // type модуля → буквенный префикс маркера.
+    // Нумерация ведётся отдельно для каждого префикса (Q1,Q2… / HL1,HL2…).
+    PREFIXES: {
+        breaker: 'Q',     // автоматический выключатель
+        diff:   'QFD',  // дифавтомат   — раскомментируй, когда нужно
+        rcd:    'QF',   // УЗО
+        // lamp:   'HL',   // лампа
+        // reley:  'KV',   // реле напряжения
+        // socket: 'XS',   // розетка
+        // switch: 'SA',   // переключатель
+    },
+
+    /**
+     * Возвращает префикс для типа модуля или null, если тип не маркируется.
+     */
+    getPrefix(type) {
+        return this.PREFIXES[type] || null;
+    },
+
+    /**
+     * Разбирает маркер вида "Q12" → { prefix:'Q', num:12 }.
+     * Возвращает null, если строка не подходит под шаблон <буквы><цифры>.
+     */
+    _parse(label) {
+        if (typeof label !== 'string') return null;
+        const m = /^([A-Za-zА-Яа-я]+)(\d+)$/.exec(label.trim());
+        if (!m) return null;
+        return { prefix: m[1], num: parseInt(m[2], 10) };
+    },
+
+    /**
+     * Сканирует ВСЕ модули на сцене и возвращает максимальный занятый
+     * номер для данного префикса. Если таких маркеров нет — 0.
+     *
+     * Учитываются и авто-, и вручную введённые маркеры — поэтому
+     * следующий авто-номер никогда не конфликтует с ручным.
+     *
+     * @param {string} prefix
+     * @param {string|null} excludeModuleId - модуль, который не учитываем
+     *        (нужно при перемаркировке, чтобы модуль не «видел сам себя»)
+     */
+    _getMaxNum(prefix, excludeModuleId = null) {
+        let max = 0;
+        for (const [id, moduleEl] of moduleManagerV2.modules) {
+            if (id === excludeModuleId) continue;
+            const label = this._readLabel(moduleEl);
+            const parsed = this._parse(label);
+            if (parsed && parsed.prefix === prefix && parsed.num > max) {
+                max = parsed.num;
+            }
+        }
+        return max;
+    },
+
+    /**
+     * Следующий свободный маркер для типа: "Q" + (max+1).
+     * Возвращает null, если тип не маркируется.
+     */
+    nextMarkerForType(type) {
+        const prefix = this.getPrefix(type);
+        if (!prefix) return null;
+        return prefix + (this._getMaxNum(prefix) + 1);
+    },
+
+    /**
+     * Назначает модулю маркер, ЕСЛИ:
+     *   - его тип маркируется (есть префикс)
+     *   - поле маркера сейчас пустое (не перетираем ручной ввод)
+     *
+     * @param {string} moduleId
+     * @param {Object} [opts]
+     * @param {boolean} [opts.force=false] - назначить даже поверх непустого
+     */
+    autoAssign(moduleId, opts = {}) {
+        const moduleEl = moduleManagerV2.modules.get(moduleId);
+        if (!moduleEl) return;
+
+        const type = moduleEl.dataset.type;
+        const prefix = this.getPrefix(type);
+        if (!prefix) return; // тип без маркировки — выходим тихо
+
+        const current = this._readLabel(moduleEl);
+        if (current && !opts.force) return; // уже заполнено вручную/ранее
+
+        const marker = prefix + (this._getMaxNum(prefix, moduleId) + 1);
+        this.setLabel(moduleId, marker);
+    },
+
+    /**
+     * Единая точка ЗАПИСИ маркера: синхронизирует все три представления
+     * (input.value, dataset.label, config.params.labelText).
+     */
+    setLabel(moduleId, text) {
+        const moduleEl = moduleManagerV2.modules.get(moduleId);
+        if (!moduleEl) return;
+
+        const input = moduleEl.querySelector('input.module-label-input');
+        if (input) input.value = text;
+        moduleEl.dataset.label = text;
+
+        const cfg = moduleManagerV2.configs.get(moduleId);
+        if (cfg) {
+            if (!cfg.params) cfg.params = {};
+            cfg.params.labelText = text;
+        }
+    },
+
+    /**
+     * Единая точка ЧТЕНИЯ маркера. Приоритет: видимый input → dataset → config.
+     */
+    _readLabel(moduleEl) {
+        const input = moduleEl.querySelector('input.module-label-input');
+        if (input && input.value) return input.value;
+        if (moduleEl.dataset.label) return moduleEl.dataset.label;
+        const cfg = moduleManagerV2.configs.get(moduleEl.dataset.moduleId);
+        return cfg?.params?.labelText || '';
+    },
+
+    /**
+     * ПЕРЕМАРКИРОВКА всех модулей (пункт 4).
+     * Для каждого префикса нумерует модули заново, начиная с 1,
+     * в порядке числовой части их moduleId (т.е. порядка создания).
+     *
+     * Ручные маркеры тоже перетираются — это осознанное поведение
+     * «привести всё в порядок». Подтверждение спрашивает вызывающий код.
+     */
+    renumberAll() {
+        // Группируем модули по префиксу
+        const byPrefix = new Map(); // prefix -> [{id, num}]
+        for (const [id, moduleEl] of moduleManagerV2.modules) {
+            const prefix = this.getPrefix(moduleEl.dataset.type);
+            if (!prefix) continue;
+            if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+            const num = parseInt((id.match(/(\d+)$/) || [0, 0])[1], 10);
+            byPrefix.get(prefix).push({ id, num });
+        }
+
+        let total = 0;
+        byPrefix.forEach((list, prefix) => {
+            list.sort((a, b) => a.num - b.num); // порядок создания
+            let n = 1;
+            list.forEach(({ id }) => {
+                this.setLabel(id, prefix + n);
+                n++;
+                total++;
+            });
+        });
+
+        return total;
+    },
+};
+window.ModuleMarkerManager = ModuleMarkerManager;
+
+/**
+ * Единая перемаркировка по кнопке: модули (Q1,Q2…) + провода (1,2…).
+ * Спрашивает подтверждение один раз на всё.
+ */
+function renumberAllMarkers() {
+    const modCount = Array.from(moduleManagerV2.modules.values())
+        .filter(el => ModuleMarkerManager.getPrefix(el.dataset.type)).length;
+    const wireCount = window.wiringManagerV2?.wires.length || 0;
+
+    if (modCount === 0 && wireCount === 0) {
+        window.Toast?.show('Нет элементов для пересчёта', 'info');
+        return;
+    }
+
+    if (!confirm(
+        `Пересчитать маркеры?\n\n` +
+        `• Модулей: ${modCount}\n` +
+        `• Проводов: ${wireCount}\n\n` +
+        `Существующие обозначения (в т.ч. введённые вручную) будут перезаписаны.`
+    )) return;
+
+    // Модули
+    const renamed = ModuleMarkerManager.renumberAll();
+
+    // Провода — переиспользуем существующую логику, но без её confirm/alert.
+    // Воспроизводим сортировку и нумерацию из WireMarkerManager.renumberAll.
+    if (window.WireMarkerManager && wireCount > 0) {
+        const wires = wiringManagerV2.wires;
+        const sorted = [...wires].sort((a, b) => {
+            const na = parseInt((a.id.match(/(\d+)$/) || [0, 0])[1], 10);
+            const nb = parseInt((b.id.match(/(\d+)$/) || [0, 0])[1], 10);
+            return na - nb;
+        });
+        let n = 1;
+        sorted.forEach(w => { w.markerNumber = n++; });
+        WireMarkerManager.nextMarkerNumber = n;
+        WireMarkerManager.renderAll();
+    }
+
+    window.AutoSaveManager?.markDirty();
+    window.Toast?.show(`Перемаркировано: ${renamed} модулей, ${wireCount} проводов`, 'success');
+}
+window.renumberAllMarkers = renumberAllMarkers;
+
+console.log('[Markers] ModuleMarkerManager зарегистрирован');
 
 /* ╔══════════════════════════════════════════════════════════════════════╗
    ║                  ════ КОНЕЦ ИСХОДНОГО КОДА ════                      ║
