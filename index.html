@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.9</title>
+    <title>Конструктор Щита v4.13.10</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -14781,6 +14781,34 @@ const CombBusManager = {
 
         return { ok: true, conflictModuleId: null };
     },
+    /**
+     * Проверяет, что все модули имеют одинаковое число полюсов.
+     * Гребёнка не должна соединять модули разной полюсности.
+     * @param {string[]} moduleIds
+     * @returns {{ok: boolean, poles: number|null, conflictModuleId: string|null}}
+     */
+    checkSamePoles(moduleIds) {
+        const moduleManager = this._getModuleManager();
+        if (!moduleManager) {
+            return { ok: true, poles: null, conflictModuleId: null };
+        }
+
+        let refPoles = null;
+
+        for (const id of (moduleIds || [])) {
+            const cfg = moduleManager.configs?.get?.(id);
+            const raw = cfg?.params?.poles;
+            const poles = Number.isFinite(parseInt(raw, 10)) ? parseInt(raw, 10) : 1;
+
+            if (refPoles === null) {
+                refPoles = poles;
+            } else if (poles !== refPoles) {
+                return { ok: false, poles: refPoles, conflictModuleId: id };
+            }
+        }
+
+        return { ok: true, poles: refPoles, conflictModuleId: null };
+    },
     getCombsForRail(railId) {
         return this.getAll().filter((c) => c.railId === railId);
     },
@@ -15487,7 +15515,28 @@ const CombBusGestureController = {
             return;
         }
 
+        // Гребёнка должна охватывать минимум два модуля (не одиночный клик).
+        if (moduleIds.length < 2) {
+            this._getToast()?.show?.(
+                'Гребёнка требует минимум два модуля',
+                'warning',
+                1600
+            );
+            return;
+        }
+
         const combBus = this._getCombBus();
+
+        // Запрет соединять модули разной полюсности.
+        const polesCheck = combBus?.checkSamePoles?.(moduleIds);
+        if (polesCheck && polesCheck.ok === false) {
+            this._getToast()?.show?.(
+                'Нельзя соединять гребёнкой модули разной полюсности',
+                'warning',
+                1900
+            );
+            return;
+        }
 
         // Запрет двух гребёнок одной стороны на одном модуле.
         const placement = combBus?.canPlaceOnModules?.(moduleIds, a.side);
@@ -20666,7 +20715,9 @@ async function generateProfessionalPDF() {
     let savedSvgState = [];
     let saved = null;
     let savedGuideDisplay = null;
-    const markersLayer = document.getElementById('markers-layer');
+     const markersLayer = document.getElementById('markers-layer');
+    const combbusLayer = document.getElementById('combbus-layer');
+    const combLayer    = document.getElementById('comb-layer');
     const guideLayer   = document.getElementById('guide-layer');
     let needsRestore = false;
     let labelStubs = [];   // подменённые маркеры модулей (input → div) на время захвата
@@ -20768,6 +20819,37 @@ async function generateProfessionalPDF() {
             });
         }
 
+        // Учитываем геометрию гребёнок: их шины/корпуса выносятся за края
+        // модулей (вверх для top, вниз для bottom) и могут выходить за bbox.
+        const combBusManager = AppRefs.manager('combBus', window.CombBusManager);
+        if (combBusManager?.getAll) {
+            combBusManager.getAll().forEach((comb) => {
+                const geom = combBusManager._computeGeometry?.(comb);
+                if (!geom) return;
+
+                if (geom.body) {
+                    minLeft = Math.min(minLeft, geom.body.x);
+                    minTop = Math.min(minTop, geom.body.y);
+                    maxRight = Math.max(maxRight, geom.body.x + geom.body.width);
+                    maxBottom = Math.max(maxBottom, geom.body.y + geom.body.height);
+                }
+
+                (geom.rows || []).forEach((row) => {
+                    minLeft = Math.min(minLeft, row.x1, row.x2);
+                    maxRight = Math.max(maxRight, row.x1, row.x2);
+                    minTop = Math.min(minTop, row.busY);
+                    maxBottom = Math.max(maxBottom, row.busY);
+
+                    (row.pins || []).forEach((pin) => {
+                        minLeft = Math.min(minLeft, pin.x);
+                        maxRight = Math.max(maxRight, pin.x);
+                        minTop = Math.min(minTop, pin.y);
+                        maxBottom = Math.max(maxBottom, pin.y);
+                    });
+                });
+            });
+        }
+
         if (!isFinite(minLeft)) {
             minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
         }
@@ -20791,7 +20873,11 @@ async function generateProfessionalPDF() {
         });
 
         // 5. SVG: меняем width/height/viewBox
-        const svgsToShift = [svgWires, svgCombs, markersLayer].filter(s => s);
+        // combbusLayer — слой гребёнок-сущностей, combLayer — провода-гребёнки.
+        const svgsToShift = [svgWires, svgCombs, combLayer, combbusLayer, markersLayer]
+            .filter(s => s)
+            // Убираем дубли, если svgCombs === combLayer (comb-layer).
+            .filter((s, i, arr) => arr.indexOf(s) === i);
         savedSvgState = svgsToShift.map(svg => ({
             el: svg,
             width:   svg.getAttribute('width'),
@@ -25910,13 +25996,30 @@ class CreateCombBusCommand extends SceneCommand {
             // Финальная защита: пересчитываем реальные модули под span и проверяем занятость.
             const railManager = RuntimeAccess.railManager();
             const railEl = railManager?.rails?.get?.(this._spec.railId);
-            if (railEl && typeof combBus.canPlaceOnModules === 'function') {
+            if (railEl) {
                 const moduleIds = combBus._resolveModulesBySpan(
                     railEl, this._spec.startSlot, this._spec.span
                 );
-                const placement = combBus.canPlaceOnModules(moduleIds, this._spec.side);
-                if (!placement.ok) {
-                    throw new Error('На этих модулях уже есть гребёнка с этой стороны');
+
+                // Минимум два модуля.
+                if (moduleIds.length < 2) {
+                    throw new Error('Гребёнка требует минимум два модуля');
+                }
+
+                // Одинаковая полюсность.
+                if (typeof combBus.checkSamePoles === 'function') {
+                    const polesCheck = combBus.checkSamePoles(moduleIds);
+                    if (!polesCheck.ok) {
+                        throw new Error('Нельзя соединять гребёнкой модули разной полюсности');
+                    }
+                }
+
+                // Нет конфликтующей гребёнки с той же стороны.
+                if (typeof combBus.canPlaceOnModules === 'function') {
+                    const placement = combBus.canPlaceOnModules(moduleIds, this._spec.side);
+                    if (!placement.ok) {
+                        throw new Error('На этих модулях уже есть гребёнка с этой стороны');
+                    }
                 }
             }
 
