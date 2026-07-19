@@ -23,6 +23,43 @@
    ╚══════════════════════════════════════════════════════════════════════╝ */
         #viewport {position: relative; width: 100%; height: 100%; overflow: hidden; background-color: #f4f4f9; cursor: default; background-image: radial-gradient(#bdc3c7 1px, transparent 1px); background-position: 0 0; background-size: 20px 20px; }
         #workspace { position: absolute; top: 0; left: 0; transform-origin: 0 0; width: 100%; height: 100%; margin: 0; padding: 0; }
+                /* ── Подложка корпуса щита ───────────────────────────────────── */
+        #shield-cabinet-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 5;              /* выше фона viewport, ниже реек/модулей/проводов */
+            overflow: visible;
+        }
+
+        #shield-cabinet-layer.hidden {
+            display: none;
+        }
+
+        .shield-cabinet-part {
+            position: absolute;
+            box-sizing: border-box;
+            border-radius: 2px;
+        }
+
+        /* Светлая подложка корпуса */
+        #shield-cabinet-fill {
+            background: linear-gradient(180deg,
+                rgba(255,255,255,0.88) 0%,
+                rgba(248,248,248,0.94) 100%);
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 10px 28px rgba(0,0,0,0.08);
+        }
+
+        /* Внутренний контур — рядом с модулями */
+        #shield-cabinet-inner {
+            border: 3px dashed rgba(25,25,25,0.92);
+        }
+
+        /* Внешний контур — габарит корпуса */
+        #shield-cabinet-outer {
+            border: 4px dashed rgba(20,20,20,0.95);
+        }
 /* ╔══════════════════════════════════════════════════════════════════════╗
    ║  03. svg-layers.css — SVG-слои                                       ║
    ╚══════════════════════════════════════════════════════════════════════╝ */
@@ -145,12 +182,13 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
 /* ╔══════════════════════════════════════════════════════════════════════╗
    ║  07. terminals.css — Клеммы, теги, цвета                             ║
    ╚══════════════════════════════════════════════════════════════════════╝ */
-        .terminal.wiring-start {
-            animation: pulse 0.5s infinite alternate;
+        .terminal-v2.wiring-start,
+        .supply-terminal.wiring-start {
+            animation: pulse-terminal 0.5s infinite alternate;
             box-shadow: 0 0 10px #f39c12 !important;
             border-color: #f39c12 !important;
         }
-        @keyframes pulse {
+        @keyframes pulse-terminal {
             from { transform: scale(1.1); }
             to { transform: scale(1.3); }
         }
@@ -736,10 +774,10 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
 }
 
 .din-rail-v2 .rail-slot-highlight {
-    animation: pulse 0.3s ease-in-out;
+    animation: pulse-rail-slot 0.3s ease-in-out;
 }
 
-@keyframes pulse {
+@keyframes pulse-rail-slot {
     0% { opacity: 0.5; }
     100% { opacity: 1; }
 }
@@ -3027,6 +3065,12 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
     <div id="viewport">
     <div id="workspace">
 
+        <div id="shield-cabinet-layer" class="hidden">
+            <div id="shield-cabinet-fill" class="shield-cabinet-part"></div>
+            <div id="shield-cabinet-inner" class="shield-cabinet-part"></div>
+            <div id="shield-cabinet-outer" class="shield-cabinet-part"></div>
+        </div>
+
         <!-- Прямоугольник выделения -->
         <div class="selection-rectangle" id="selectionRectangle"></div>
 
@@ -3037,6 +3081,8 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
         <svg id="markers-layer"></svg>
     </div>
     </div>
+</div>
+</div>
 
 <!-- Скрытый input для выбора файла проекта (перенесён из сайдбара) -->
 <input type="file" id="loadProjectFileInput" accept=".json,application/json" style="display:none;">
@@ -3046,13 +3092,6 @@ path.wire { fill: none; cursor: pointer; pointer-events: stroke; transition: opa
 
 <!-- Контекстное меню для модулей v2 - замените полностью -->
 <div class="context-menu" id="moduleContextMenuV2"></div>
-
-<!-- Контекстное меню для проводов -->
-<div class="context-menu" id="wireContextMenu"></div>
-
-<!-- Контекстное меню для модулей v2 - замените полностью -->
-<div class="context-menu" id="moduleContextMenuV2"></div>
-
 
 <script>
 /* ╔══════════════════════════════════════════════════════════════════════╗
@@ -3084,6 +3123,8 @@ const APP_CONFIG = Object.freeze({
     // --- Провода ---
     WIRE_CORNER_RADIUS: 30,
     WIRE_GUIDE_OFFSET: 80,        // отступ направляющих от реек
+    WIRE_GUIDE_HORIZONTAL_OFFSET: 80,
+    WIRE_GUIDE_VERTICAL_OFFSET: 30,
     WIRE_OFFSET: 50,              // запас при отрисовке провода в режиме "без направляющих"
     WIRE_SAME_LINE_THRESHOLD: 30, // порог "одной горизонтали" для двух клемм
     WIRE_CLONE_OFFSET: 20,        // смещение клона модуля по X
@@ -10477,10 +10518,6 @@ class DinRailManagerV2 {
         // Кэш rect'ов реек на время drag модуля (рейки в этот момент неподвижны).
         // null = кэш неактивен, считаем rect вживую.
         this._railRectCache = null;
-    
-    // Кэш rect'ов реек на время drag модуля (рейки в этот момент неподвижны).
-    // null = кэш неактивен, считаем rect вживую.
-    this._railRectCache = null;
     }
     _getWiringManager() {
         return RuntimeAccess.wiringManager();
@@ -14484,9 +14521,46 @@ class GuideLineManager {
         this.dinRailManager = dinRailManager;
         this.horizontalGuides = new Map(); // id -> { y, minX, maxX, railId }
         this.verticalGuides = new Map();   // id -> { x, minY, maxY, groupId }
-        this.guideOffset = APP_CONFIG.WIRE_GUIDE_OFFSET;
+
+        // legacy fallback
+        this.guideOffset = Number(APP_CONFIG.WIRE_GUIDE_OFFSET ?? 80);
+
+        const defaults = this._getDefaultGuideOffsets();
+        this.horizontalGuideOffset = defaults.horizontal;
+        this.verticalGuideOffset = defaults.vertical;
+
         this.showGuides = true;            // показывать направляющие (режим отладки)
         this.guideLayer = this.createGuideLayer();
+    }
+
+    _getDefaultGuideOffsets() {
+        const fallback = Number(APP_CONFIG.WIRE_GUIDE_OFFSET ?? 80);
+
+        const horizontal = Number(
+            APP_CONFIG.WIRE_GUIDE_HORIZONTAL_OFFSET ?? fallback
+        );
+        const vertical = Number(
+            APP_CONFIG.WIRE_GUIDE_VERTICAL_OFFSET ?? fallback
+        );
+
+        return {
+            horizontal: Number.isFinite(horizontal) ? horizontal : fallback,
+            vertical: Number.isFinite(vertical) ? vertical : fallback,
+        };
+    }
+
+    getGuideOffsets() {
+        const fallback = Number.isFinite(this.guideOffset)
+            ? this.guideOffset
+            : Number(APP_CONFIG.WIRE_GUIDE_OFFSET ?? 80);
+
+        const horizontal = Number(this.horizontalGuideOffset);
+        const vertical = Number(this.verticalGuideOffset);
+
+        return {
+            horizontal: Number.isFinite(horizontal) ? horizontal : fallback,
+            vertical: Number.isFinite(vertical) ? vertical : fallback,
+        };
     }
 
     createGuideLayer() {
@@ -14504,9 +14578,58 @@ class GuideLineManager {
         return svg;
     }
 
+    /**
+     * Legacy API: старый единый offset.
+     * Ставит одинаковое значение и для горизонтальных, и для вертикальных.
+     */
     setOffset(offset) {
-        this.guideOffset = offset;
+        const value = Number(offset);
+        if (!Number.isFinite(value)) return false;
+
+        this.guideOffset = value;
+        this.horizontalGuideOffset = value;
+        this.verticalGuideOffset = value;
         this.updateFromRails();
+        return true;
+    }
+
+    /**
+     * Новый API: раздельная настройка offset'ов.
+     * Пример:
+     *   guideLineManager.setOffsets({ horizontal: 60, vertical: 100 });
+     */
+    setOffsets({ horizontal, vertical } = {}) {
+        let changed = false;
+
+        if (horizontal !== undefined) {
+            const value = Number(horizontal);
+            if (Number.isFinite(value)) {
+                this.horizontalGuideOffset = value;
+                changed = true;
+            }
+        }
+
+        if (vertical !== undefined) {
+            const value = Number(vertical);
+            if (Number.isFinite(value)) {
+                this.verticalGuideOffset = value;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.updateFromRails();
+        }
+
+        return changed;
+    }
+
+    setHorizontalOffset(offset) {
+        return this.setOffsets({ horizontal: offset });
+    }
+
+    setVerticalOffset(offset) {
+        return this.setOffsets({ vertical: offset });
     }
 
     setVisibility(visible) {
@@ -14520,7 +14643,15 @@ class GuideLineManager {
         this.guideLayer.innerHTML = '';
 
         const rails = Array.from(document.querySelectorAll('.din-rail-v2'));
-        if (rails.length === 0) return;
+        if (rails.length === 0) {
+            window.ShieldCabinetLayer?.scheduleRender?.();
+            return;
+        }
+
+        const {
+            horizontal: horizontalOffset,
+            vertical: verticalOffset,
+        } = this.getGuideOffsets();
 
         let globalMinY = Infinity, globalMaxY = -Infinity;
         let globalMinX = Infinity, globalMaxX = -Infinity;
@@ -14529,8 +14660,8 @@ class GuideLineManager {
         rails.forEach(rail => {
             const left = parseFloat(rail.style.left) || 0;
             const top = parseFloat(rail.style.top) || 0;
-            const width = rail.clientWidth;   
-            const height = rail.clientHeight; 
+            const width = rail.clientWidth;
+            const height = rail.clientHeight;
             const right = left + width;
             const bottom = top + height;
 
@@ -14544,8 +14675,8 @@ class GuideLineManager {
 
         // --- 1. Горизонтальные направляющие (над и под каждой рейкой) ---
         railBounds.forEach(({ rail, left, right, top, bottom }) => {
-            const topY = top - this.guideOffset;
-            const bottomY = bottom + this.guideOffset;
+            const topY = top - horizontalOffset;
+            const bottomY = bottom + horizontalOffset;
 
             this.horizontalGuides.set(`h-top-${rail.id}`, {
                 y: topY,
@@ -14553,7 +14684,7 @@ class GuideLineManager {
                 maxX: right,
                 railId: rail.id
             });
-            
+
             this.horizontalGuides.set(`h-bottom-${rail.id}`, {
                 y: bottomY,
                 minX: left,
@@ -14563,8 +14694,8 @@ class GuideLineManager {
         });
 
         // --- 2. Вертикальные направляющие (общие слева и справа) ---
-        const leftX = globalMinX - this.guideOffset;
-        const rightX = globalMaxX + this.guideOffset;
+        const leftX = globalMinX - verticalOffset;
+        const rightX = globalMaxX + verticalOffset;
 
         this.verticalGuides.set('v-global-left', {
             x: leftX,
@@ -14572,7 +14703,7 @@ class GuideLineManager {
             maxY: globalMaxY,
             groupId: 'global-left'
         });
-        
+
         this.verticalGuides.set('v-global-right', {
             x: rightX,
             minY: globalMinY,
@@ -14582,12 +14713,12 @@ class GuideLineManager {
 
         // --- 3. Вертикальные направляющие между колонками реек ---
         const columnGroups = new Map();
-railBounds.forEach(b => {
-    const tol = APP_CONFIG.RAIL_GROUP_TOLERANCE_X;
-    const leftKey = Math.round(b.left / tol) * tol;
-    if (!columnGroups.has(leftKey)) columnGroups.set(leftKey, []);
-    columnGroups.get(leftKey).push(b);
-});
+        railBounds.forEach(b => {
+            const tol = APP_CONFIG.RAIL_GROUP_TOLERANCE_X;
+            const leftKey = Math.round(b.left / tol) * tol;
+            if (!columnGroups.has(leftKey)) columnGroups.set(leftKey, []);
+            columnGroups.get(leftKey).push(b);
+        });
 
         const columns = Array.from(columnGroups.values())
             .map(group => ({
@@ -14601,8 +14732,9 @@ railBounds.forEach(b => {
             const colA = columns[i];
             const colB = columns[i + 1];
             const gapCenter = (colA.right + colB.left) / 2;
+
             if (colB.left - colA.right > APP_CONFIG.RAIL_GAP_THRESHOLD) {
-    this.verticalGuides.set(`v-internal-${i}`, {
+                this.verticalGuides.set(`v-internal-${i}`, {
                     x: gapCenter,
                     minY: globalMinY,
                     maxY: globalMaxY,
@@ -14613,26 +14745,39 @@ railBounds.forEach(b => {
 
         // --- 4. Дополнительные вертикальные направляющие для каждой группы ---
         const rowsByY = new Map();
-railBounds.forEach(b => {
-    const tol = APP_CONFIG.RAIL_GROUP_TOLERANCE_Y;
-    const yKey = Math.round(b.top / tol) * tol;
-    if (!rowsByY.has(yKey)) rowsByY.set(yKey, []);
-    rowsByY.get(yKey).push(b);
-});
+        railBounds.forEach(b => {
+            const tol = APP_CONFIG.RAIL_GROUP_TOLERANCE_Y;
+            const yKey = Math.round(b.top / tol) * tol;
+            if (!rowsByY.has(yKey)) rowsByY.set(yKey, []);
+            rowsByY.get(yKey).push(b);
+        });
 
         rowsByY.forEach(group => {
             const minY = Math.min(...group.map(b => b.top));
             const maxY = Math.max(...group.map(b => b.bottom));
             const leftMost = Math.min(...group.map(b => b.left));
             const rightMost = Math.max(...group.map(b => b.right));
-            const leftX = leftMost - this.guideOffset;
-            const rightX = rightMost + this.guideOffset;
 
-            this.verticalGuides.set(`v-left-row-${minY}`, { x: leftX, minY, maxY, groupId: `left-${minY}` });
-            this.verticalGuides.set(`v-right-row-${minY}`, { x: rightX, minY, maxY, groupId: `right-${minY}` });
+            const rowLeftX = leftMost - verticalOffset;
+            const rowRightX = rightMost + verticalOffset;
+
+            this.verticalGuides.set(`v-left-row-${minY}`, {
+                x: rowLeftX,
+                minY,
+                maxY,
+                groupId: `left-${minY}`
+            });
+
+            this.verticalGuides.set(`v-right-row-${minY}`, {
+                x: rowRightX,
+                minY,
+                maxY,
+                groupId: `right-${minY}`
+            });
         });
 
         if (this.showGuides) this.drawGuides();
+        window.ShieldCabinetLayer?.scheduleRender?.();
     }
 
     drawGuides() {
@@ -14706,7 +14851,139 @@ railBounds.forEach(b => {
         return bestGuide;
     }
 }
+const ShieldCabinetLayer = {
+    _initialized: false,
+    _els: null,
 
+    CFG: Object.freeze({
+        /* Отступ внутреннего контура от массива модулей/реек */
+        INNER_PAD_X: 10,
+        INNER_PAD_Y: 100,
+
+        /* Расстояние от внутреннего контура до внешнего */
+        OUTER_GAP_X: 100,
+        OUTER_GAP_Y: 160,
+
+        MIN_WIDTH: 220,
+        MIN_HEIGHT: 180,
+    }),
+
+    init() {
+        if (this._initialized) return true;
+        this._initialized = true;
+
+        this._els = {
+            layer: document.getElementById('shield-cabinet-layer'),
+            fill: document.getElementById('shield-cabinet-fill'),
+            inner: document.getElementById('shield-cabinet-inner'),
+            outer: document.getElementById('shield-cabinet-outer'),
+        };
+
+        if (!this._els.layer || !this._els.fill || !this._els.inner || !this._els.outer) {
+            console.warn('ShieldCabinetLayer: DOM-элементы не найдены');
+            return false;
+        }
+
+        window.addEventListener('resize', () => this.scheduleRender());
+        this.scheduleRender();
+        return true;
+    },
+
+    scheduleRender() {
+        RAFScheduler.schedule('shield-cabinet-render', () => this.render());
+    },
+
+    hide() {
+        if (this._els?.layer) {
+            this._els.layer.classList.add('hidden');
+        }
+    },
+
+    render() {
+        const layer = this._els?.layer;
+        if (!layer) return false;
+
+        const rails = Array.from(document.querySelectorAll('.din-rail-v2'));
+        if (rails.length === 0) {
+            this.hide();
+            return false;
+        }
+
+        let minRailX = Infinity;
+        let minRailY = Infinity;
+        let maxRailX = -Infinity;
+        let maxRailY = -Infinity;
+
+        rails.forEach((rail) => {
+            const x = parseFloat(rail.style.left) || 0;
+            const y = parseFloat(rail.style.top) || 0;
+            const w = rail.clientWidth || parseFloat(rail.style.width) || 0;
+            const h = rail.clientHeight || parseFloat(rail.style.height) || APP_CONFIG.RAIL_HEIGHT;
+
+            minRailX = Math.min(minRailX, x);
+            minRailY = Math.min(minRailY, y);
+            maxRailX = Math.max(maxRailX, x + w);
+            maxRailY = Math.max(maxRailY, y + h);
+        });
+
+        /* По ширине берём рейки, по высоте учитываем реальные модули на рейках */
+        let minModuleY = Infinity;
+        let maxModuleY = -Infinity;
+        let hasMountedModules = false;
+
+        rails.forEach((rail) => {
+            rail.querySelectorAll('.module-v2.on-rail').forEach((moduleEl) => {
+                const rect = moduleEl.getBoundingClientRect();
+                const tl = getLogicalCoords(rect.left, rect.top);
+                const br = getLogicalCoords(rect.right, rect.bottom);
+
+                minModuleY = Math.min(minModuleY, tl.y);
+                maxModuleY = Math.max(maxModuleY, br.y);
+                hasMountedModules = true;
+            });
+        });
+
+        const contentTop = Math.min(minRailY, hasMountedModules ? minModuleY : minRailY);
+        const contentBottom = Math.max(maxRailY, hasMountedModules ? maxModuleY : maxRailY);
+
+        const inner = {
+            left: Math.round(minRailX - this.CFG.INNER_PAD_X),
+            top: Math.round(contentTop - this.CFG.INNER_PAD_Y),
+            width: Math.round(Math.max(
+                this.CFG.MIN_WIDTH,
+                (maxRailX - minRailX) + this.CFG.INNER_PAD_X * 2
+            )),
+            height: Math.round(Math.max(
+                this.CFG.MIN_HEIGHT,
+                (contentBottom - contentTop) + this.CFG.INNER_PAD_Y * 2
+            )),
+        };
+
+        const outer = {
+            left: inner.left - this.CFG.OUTER_GAP_X,
+            top: inner.top - this.CFG.OUTER_GAP_Y,
+            width: inner.width + this.CFG.OUTER_GAP_X * 2,
+            height: inner.height + this.CFG.OUTER_GAP_Y * 2,
+        };
+
+        this._setRect(this._els.fill, outer);
+        this._setRect(this._els.inner, inner);
+        this._setRect(this._els.outer, outer);
+
+        layer.classList.remove('hidden');
+        return true;
+    },
+
+    _setRect(el, rect) {
+        if (!el || !rect) return;
+        el.style.left = rect.left + 'px';
+        el.style.top = rect.top + 'px';
+        el.style.width = rect.width + 'px';
+        el.style.height = rect.height + 'px';
+    },
+};
+
+window.ShieldCabinetLayer = ShieldCabinetLayer;
 /* ╔══════════════════════════════════════════════════════════════════════╗
    ║  31.5 comb-bus-manager.js — Шины-гребёнки (CombBus)                  ║
    ║  Гребёнка = отдельная сущность: садится на соседние подряд модули    ║
@@ -20849,7 +21126,21 @@ async function generateProfessionalPDF() {
                 });
             });
         }
+// Учитываем подложку корпуса щита
+        const cabinetFill = document.getElementById('shield-cabinet-fill');
+        if (cabinetFill && cabinetFill.offsetParent !== null) {
+            const left = parseFloat(cabinetFill.style.left) || 0;
+            const top = parseFloat(cabinetFill.style.top) || 0;
+            const width = parseFloat(cabinetFill.style.width) || cabinetFill.offsetWidth || 0;
+            const height = parseFloat(cabinetFill.style.height) || cabinetFill.offsetHeight || 0;
 
+            if (width > 0 && height > 0) {
+                minLeft = Math.min(minLeft, left);
+                minTop = Math.min(minTop, top);
+                maxRight = Math.max(maxRight, left + width);
+                maxBottom = Math.max(maxBottom, top + height);
+            }
+        }
         if (!isFinite(minLeft)) {
             minLeft = 0; minTop = 0; maxRight = 100; maxBottom = 100;
         }
@@ -21572,6 +21863,7 @@ const UIBootstrap = {
             SubBoard,
             ToolBar,
             SupTool,
+            ShieldCabinetLayer,
             CombBusGestureController,
         ]);
 
@@ -22145,6 +22437,10 @@ const ProjectValidator = {
             return { ok: false, error: '"view" должно быть объектом.' };
         }
 
+        if ('combBuses' in raw && !Array.isArray(raw.combBuses)) {
+            return { ok: false, error: '"combBuses" должно быть массивом (если присутствует).' };
+        }
+
         if ('favorites' in raw && !Array.isArray(raw.favorites)) {
             return { ok: false, error: '"favorites" должно быть массивом (если присутствует).' };
         }
@@ -22158,6 +22454,7 @@ const ProjectValidator = {
             this._checkUniqueIds(data.rails, 'реек'),
             this._checkUniqueIds(data.modules, 'модулей'),
             this._checkUniqueIds(data.wires, 'проводов'),
+            this._checkUniqueIds(data.combBuses, 'гребёнок'),
         ];
 
         for (const check of checks) {
@@ -22199,6 +22496,7 @@ const ProjectValidator = {
         const rawRails = Array.isArray(raw.rails) ? raw.rails.filter(Boolean) : [];
         const rawModules = Array.isArray(raw.modules) ? raw.modules.filter(Boolean) : [];
         const rawWires = Array.isArray(raw.wires) ? raw.wires.filter(Boolean) : [];
+        const rawCombBuses = Array.isArray(raw.combBuses) ? raw.combBuses.filter(Boolean) : [];
         const rawFavorites = Array.isArray(raw.favorites) ? raw.favorites.filter(Boolean) : [];
 
         if (rawModules.length !== data.modules.length) {
@@ -22210,6 +22508,12 @@ const ProjectValidator = {
         if (rawWires.length !== data.wires.length) {
             warnings.push(
                 `Некорректных проводов пропущено при нормализации: ${rawWires.length - data.wires.length}.`
+            );
+        }
+
+        if ('combBuses' in raw && rawCombBuses.length !== data.combBuses.length) {
+            warnings.push(
+                `Некорректных гребёнок пропущено при нормализации: ${rawCombBuses.length - data.combBuses.length}.`
             );
         }
 
@@ -22245,6 +22549,19 @@ const ProjectValidator = {
             );
         }
 
+        const combsWithMissingRail = rawCombBuses.filter(comb =>
+            comb &&
+            typeof comb === 'object' &&
+            comb.railId &&
+            !rawRailIds.has(String(comb.railId))
+        ).length;
+
+        if (combsWithMissingRail > 0) {
+            warnings.push(
+                `Гребёнок со ссылкой на отсутствующую рейку: ${combsWithMissingRail}. Они будут пропущены.`
+            );
+        }
+
         const rawLayerIds = new Set(
             rawLayers
                 .filter(layer => layer && typeof layer === 'object')
@@ -22265,6 +22582,19 @@ const ProjectValidator = {
             );
         }
 
+        const combsWithMissingLayer = rawCombBuses.filter(comb =>
+            comb &&
+            typeof comb === 'object' &&
+            comb.layerId &&
+            !rawLayerIds.has(String(comb.layerId))
+        ).length;
+
+        if (combsWithMissingLayer > 0) {
+            warnings.push(
+                `Гребёнок с отсутствующим слоем: ${combsWithMissingLayer}. Они будут перенесены в слой "${APP_CONFIG.DEFAULT_LAYER_ID}".`
+            );
+        }
+
         if (data.rails.length === 0 && data.modules.length === 0) {
             warnings.push('Проект не содержит реек и модулей.');
         }
@@ -22275,6 +22605,7 @@ const ProjectValidator = {
 
         return warnings;
     },
+
 };
 /* ╔══════════════════════════════════════════════════════════════════════╗
    ║  48. project-io.js — Сохранение и загрузка проекта                   ║
@@ -22554,6 +22885,10 @@ const ProjectIO = {
             console.warn(`ProjectIO: замечания при загрузке "${filename}":`, result.warnings);
         }
 
+        result.data.__loadWarnings = Array.isArray(result.warnings)
+            ? [...result.warnings]
+            : [];
+
         return result.data;
     },
     
@@ -22593,28 +22928,32 @@ const ProjectIO = {
      * Не трогает: настройки инструментов (цвет/толщина/режим), zoom/pan, избранное.
      * Их при загрузке проекта применит _applyProject.
      */
-                    _clearScene() {
+        _clearScene() {
         const selectionManager = this._getSelectionManager();
         const moduleManager = this._getModuleManager();
         const railManager = this._getRailManager();
         const wiringManager = this._getWiringManager();
         const layersUI = this._getLayersUI();
         const wireMarkerManager = this._getWireMarkerManager();
+        const combBusManager = this._getCombBusManager();
         const history = this._getHistoryManager();
         const defaultLayer = ProjectContract.defaultLayer();
         const workspaceEl = window.workspace || document.getElementById('workspace');
 
+        // 1. Прерываем активные операции
         window.ActiveDrag?.abort?.();
         this._pendingFavorites = null;
 
         wiringManager?.cancelWiring?.();
         wiringManager?.finishWiring?.();
 
+        // 2. Снимаем выделение и чистим selection-state
         selectionManager?.clearAll?.({
             sync: false,
             source: 'ProjectIO._clearScene.selection',
         });
         wiringManager?.deselectWire?.();
+        combBusManager?.deselect?.();
 
         ProjectStore.setSelection({
             moduleIds: [],
@@ -22626,17 +22965,18 @@ const ProjectIO = {
             source: 'ProjectIO._clearScene.selectionReset',
         });
 
+        // 3. Сначала очищаем гребёнки и провода
+        combBusManager?.reset?.();
+
         if (wiringManager) {
             if (Array.isArray(wiringManager.wires)) {
                 wiringManager.wires.length = 0;
             }
             wiringManager.selectedWireId = null;
             wiringManager.nextId = 0;
-            wiringManager.invalidateTerminalCache?.();
-            wiringManager.invalidateWireIndex?.();
-            wiringManager.renderWires?.();
         }
 
+        // 4. Потом модули
         if (moduleManager) {
             moduleManager.modules?.forEach?.((el) => el.remove?.());
             moduleManager.modules?.clear?.();
@@ -22646,6 +22986,7 @@ const ProjectIO = {
             moduleManager.registerSupplyTerminals?.();
         }
 
+        // 5. Потом рейки
         if (railManager) {
             railManager.rails?.forEach?.((el) => el.remove?.());
             railManager.rails?.clear?.();
@@ -22653,16 +22994,23 @@ const ProjectIO = {
             railManager.guideLineManager?.updateFromRails?.();
         }
 
+        // 6. Добиваем возможные хвосты в workspace
         workspaceEl?.querySelectorAll?.('.module-v2, .din-rail-v2')?.forEach?.((el) => el.remove());
 
-        wireMarkerManager?.reset?.();
-        RuntimeAccess.combBusManager?.()?.reset?.();
+        // 7. Финальная синхронизация зависимых слоёв и кэшей
+        wiringManager?.invalidateTerminalCache?.();
+        wiringManager?.invalidateWireIndex?.();
+        wiringManager?.renderWires?.();
 
+        wireMarkerManager?.reset?.();
+
+        // 8. Сбрасываем слои
         if (layersUI) {
             layersUI.items = [defaultLayer];
             layersUI.activeId = defaultLayer.id;
         }
 
+        // 9. Служебное состояние проекта
         DocumentMetaService.resetForNewProject('ProjectIO._clearScene.documentMeta');
 
         ProjectStore.setDirty(false, {
@@ -22683,12 +23031,12 @@ const ProjectIO = {
      * и передаёт управление _applyProject.
      */
         async _confirmAndLoad(projectData, filename) {
-        const data = ProjectContract.normalize(projectData);
         const ui = this._getUIService();
+        const projectName = projectData?.meta?.projectName || 'Без названия';
 
         if (!this._isSceneEmpty()) {
             const message =
-                `Загрузить проект "${data.meta.projectName}"?\n\n` +
+                `Загрузить проект "${projectName}"?\n\n` +
                 `Текущий проект будет полностью заменён. Несохранённые изменения будут потеряны.`;
 
             const ok = ui?.confirm
@@ -22702,8 +23050,7 @@ const ProjectIO = {
         }
 
         this._clearScene();
-        await this._applyProject(data, filename);
-        return true;
+        return await this._applyProject(projectData, filename);
     },
     
     /**
@@ -22719,47 +23066,123 @@ const ProjectIO = {
      *   6. activeLayerId, финализация UI
      */
     async _applyProject(projectData, filename) {
+        const loadWarnings = Array.isArray(projectData?.__loadWarnings)
+            ? [...projectData.__loadWarnings]
+            : [];
+
         projectData = ProjectContract.normalize(projectData);
+
         const errors = [];
-        
+        const partial = {
+            modules: 0,
+            wires: 0,
+            combBuses: 0,
+        };
+
         try { this._applyView(projectData.view); }
-        catch (err) { errors.push(`view: ${err.message}`); console.error('ProjectIO._applyView:', err); }
-        
-        try { this._applyLayers(projectData.layers); }
-        catch (err) { errors.push(`layers: ${err.message}`); console.error('ProjectIO._applyLayers:', err); }
-        
-        try { this._applyRails(projectData.rails); }
-        catch (err) { errors.push(`rails: ${err.message}`); console.error('ProjectIO._applyRails:', err); }
-        
-        try { await this._applyModules(projectData.modules); }
-        catch (err) { errors.push(`modules: ${err.message}`); console.error('ProjectIO._applyModules:', err); }
-        
-        try { this._applyWires(projectData.wires); }
-        catch (err) { errors.push(`wires: ${err.message}`); console.error('ProjectIO._applyWires:', err); }
-        
-        try { this._applyCombBuses(projectData.combBuses); }
-        catch (err) { errors.push(`combBuses: ${err.message}`); console.error('ProjectIO._applyCombBuses:', err); }
-        
-        try { this._finalizeApply(projectData); }
-        catch (err) { errors.push(`finalize: ${err.message}`); console.error('ProjectIO._finalizeApply:', err); }
-        
-         if (errors.length > 0) {
-            alert(
-                `Проект "${projectData.meta.projectName}" загружен с ошибками:\n\n` +
-                errors.join('\n') +
-                `\n\nПодробности в консоли (F12). Сцена может быть в неполном состоянии.`
-            );
-        } else {
-            console.log(`ProjectIO: проект "${projectData.meta.projectName}" из файла "${filename}" успешно загружен`);
+        catch (err) {
+            errors.push(`view: ${err.message}`);
+            console.error('ProjectIO._applyView:', err);
         }
-        
-        // НОВОЕ: предложить импорт избранного, если оно есть в файле
+
+        try { this._applyLayers(projectData.layers); }
+        catch (err) {
+            errors.push(`layers: ${err.message}`);
+            console.error('ProjectIO._applyLayers:', err);
+        }
+
+        try { this._applyRails(projectData.rails); }
+        catch (err) {
+            errors.push(`rails: ${err.message}`);
+            console.error('ProjectIO._applyRails:', err);
+        }
+
+        try {
+            const result = await this._applyModules(projectData.modules);
+            partial.modules = result?.skipped || 0;
+        } catch (err) {
+            errors.push(`modules: ${err.message}`);
+            console.error('ProjectIO._applyModules:', err);
+        }
+
+        try {
+            const result = this._applyWires(projectData.wires);
+            partial.wires = result?.skipped || 0;
+        } catch (err) {
+            errors.push(`wires: ${err.message}`);
+            console.error('ProjectIO._applyWires:', err);
+        }
+
+        try {
+            const result = this._applyCombBuses(projectData.combBuses);
+            partial.combBuses = result?.skipped || 0;
+        } catch (err) {
+            errors.push(`combBuses: ${err.message}`);
+            console.error('ProjectIO._applyCombBuses:', err);
+        }
+
+        try { this._finalizeApply(projectData); }
+        catch (err) {
+            errors.push(`finalize: ${err.message}`);
+            console.error('ProjectIO._finalizeApply:', err);
+        }
+
+        const details = [];
+
+        if (errors.length > 0) {
+            details.push(...errors);
+        }
+        if (partial.modules > 0) {
+            details.push(`modules: пропущено ${partial.modules}`);
+        }
+        if (partial.wires > 0) {
+            details.push(`wires: пропущено ${partial.wires}`);
+        }
+        if (partial.combBuses > 0) {
+            details.push(`combBuses: пропущено ${partial.combBuses}`);
+        }
+        if (loadWarnings.length > 0) {
+            details.push(...loadWarnings);
+        }
+
+        const loadedCleanly = details.length === 0;
+
+        if (!loadedCleanly) {
+            ProjectStore.setDirty(true, {
+                emit: true,
+                source: 'ProjectIO._applyProject.partialLoad'
+            });
+
+            console.warn(
+                `ProjectIO: проект "${projectData.meta.projectName}" из файла "${filename}" загружен не полностью`,
+                { errors, partial, loadWarnings }
+            );
+
+            alert(
+                `Проект "${projectData.meta.projectName}" загружен не полностью:\n\n` +
+                details.join('\n') +
+                `\n\nСостояние НЕ помечено как сохранённое. Проверьте сцену и при необходимости пересохраните проект.`
+            );
+
+            this._notify(
+                'Проект загружен частично. Состояние не помечено как сохранённое.',
+                'warning',
+                2800
+            );
+
+            return false;
+        }
+
+        console.log(
+            `ProjectIO: проект "${projectData.meta.projectName}" из файла "${filename}" успешно загружен`
+        );
+
         this._maybeOfferFavoritesImport(projectData);
-        
-        // Загруженный из файла проект = актуальное состояние, не "грязное".
-        // Сразу сохраняем как черновик, чтобы при F5 восстановилось именно оно.
-        window.AutoSaveManager?.markSaved();
-        window.AutoSaveManager?.flush();
+
+        window.AutoSaveManager?.markSaved?.();
+        window.AutoSaveManager?.flush?.();
+
+        return true;
     },
     _applyView(view) {
         if (!view) return;
@@ -22804,7 +23227,9 @@ const ProjectIO = {
             throw new Error('ModuleManager недоступен');
         }
 
-        if (!Array.isArray(modules) || modules.length === 0) return;
+        if (!Array.isArray(modules) || modules.length === 0) {
+            return { applied: 0, skipped: 0 };
+        }
 
         const sorted = [...modules].sort((a, b) => {
             const na = parseInt((String(a.id).match(/(\d+)$/) || [0, 0])[1], 10);
@@ -22812,13 +23237,25 @@ const ProjectIO = {
             return na - nb;
         });
 
+        let applied = 0;
+        let skipped = 0;
+
         for (const snapshot of sorted) {
             try {
-                await moduleManager.recreateModule?.(snapshot);
+                const recreated = await moduleManager.recreateModule?.(snapshot);
+                if (recreated) {
+                    applied++;
+                } else {
+                    skipped++;
+                    console.warn(`ProjectIO._applyModules: модуль ${snapshot?.id} не был восстановлен`);
+                }
             } catch (err) {
+                skipped++;
                 console.error(`ProjectIO._applyModules: ошибка для ${snapshot?.id}:`, err);
             }
         }
+
+        return { applied, skipped };
     },
     
 
@@ -22831,13 +23268,18 @@ const ProjectIO = {
             throw new Error('WiringManager недоступен');
         }
 
-        if (!Array.isArray(wires) || wires.length === 0) return;
+        if (!Array.isArray(wires) || wires.length === 0) {
+            return { applied: 0, skipped: 0 };
+        }
 
+        let applied = 0;
         let skipped = 0;
 
         wires.forEach((snapshot) => {
             const wire = wiringManager.recreateWire?.(snapshot, { deferRender: true });
-            if (!wire) {
+            if (wire) {
+                applied++;
+            } else {
                 skipped++;
             }
         });
@@ -22850,25 +23292,38 @@ const ProjectIO = {
         if (skipped > 0) {
             console.warn(`ProjectIO._applyWires: пропущено ${skipped} проводов`);
         }
+
+        return { applied, skipped };
     },
     _applyCombBuses(combBuses) {
         const combBus = this._getCombBusManager();
-        if (!combBus) return;
-        if (!Array.isArray(combBuses) || combBuses.length === 0) return;
+        if (!combBus) {
+            return { applied: 0, skipped: 0 };
+        }
 
+        if (!Array.isArray(combBuses) || combBuses.length === 0) {
+            return { applied: 0, skipped: 0 };
+        }
+
+        let applied = 0;
         let skipped = 0;
 
         combBuses.forEach((snapshot) => {
             const created = combBus.recreateComb?.(snapshot);
-            if (!created) skipped++;
+            if (created) {
+                applied++;
+            } else {
+                skipped++;
+            }
         });
 
-        // Перерисовка на случай, если модули/рейки встали не в том порядке.
         combBus.renderAll?.();
 
         if (skipped > 0) {
             console.warn(`ProjectIO._applyCombBuses: пропущено ${skipped} гребёнок`);
         }
+
+        return { applied, skipped };
     },
 
         _finalizeApply(projectData) {
@@ -22928,7 +23383,6 @@ const ProjectIO = {
             return;
         }
 
-        // Валидируем черновик тем же валидатором, что и файлы проектов
         const result = ProjectValidator.validate(draft.data);
         if (!result.ok) {
             console.warn('ProjectIO.offerDraftRestore: черновик не прошёл валидацию:', result.error);
@@ -22937,13 +23391,22 @@ const ProjectIO = {
             return;
         }
 
+        result.data.__loadWarnings = Array.isArray(result.warnings)
+            ? [...result.warnings]
+            : [];
+
         try {
             this._clearScene();
-            await this._applyProject(result.data, '(автосохранение)');
+            const loadedCleanly = await this._applyProject(result.data, '(автосохранение)');
+
+            if (loadedCleanly === false) {
+                return false;
+            }
+
             this._notify('Черновик восстановлен', 'success');
-            // Черновик НЕ чистим — пусть остаётся как страховка.
-            // Но помечаем как dirty, чтобы beforeunload предупредил, если не сохранят в файл.
             window.AutoSaveManager?.markDirty();
+
+            return true;
         } catch (err) {
             console.error('ProjectIO.offerDraftRestore: ошибка восстановления:', err);
             this._notify('Не удалось восстановить черновик', 'error', 2200);
@@ -23325,6 +23788,10 @@ const RuntimeAccess = {
     },
 
     triggerProjectRecalc(options = {}) {
+        if (options.cabinet !== false) {
+            window.ShieldCabinetLayer?.scheduleRender?.();
+        }
+
         if (options.tags !== false) {
             this.triggerTagUpdate();
         }
@@ -27161,34 +27628,29 @@ class PasteCommand extends SceneCommand {
             );
         }
 
-        const realUpdateAllWires = wiringManager.updateAllWires;
-        wiringManager.updateAllWires = function () {};
-
-        try {
-            for (const r of snapshots.rails) {
-                railManager.recreateRail(r.rail, { deferGuides: true });
-                for (const m of r.modules) {
-                    await moduleManager.recreateModule(m);
-                }
+        for (const r of snapshots.rails) {
+            railManager.recreateRail(r.rail, { deferGuides: true });
+            for (const m of r.modules) {
+                await moduleManager.recreateModule(m);
             }
-
-            for (const m of snapshots.modules) {
-                const el = await moduleManager.recreateModule(m);
-                if (el) {
-                    this._tryAttachToRail(el);
-                }
-            }
-
-            snapshots.wires.forEach((s) => {
-                const wire = wiringManager.recreateWire(s, { deferRender: true });
-                if (wire && s.markerNumber == null) {
-                    wireMarkerManager?.assignNumber?.(wire);
-                    s.markerNumber = wire.markerNumber;
-                }
-            });
-        } finally {
-            wiringManager.updateAllWires = realUpdateAllWires;
         }
+
+        for (const m of snapshots.modules) {
+            const el = await moduleManager.recreateModule(m);
+            if (el) {
+                this._tryAttachToRail(el);
+            }
+        }
+
+        snapshots.wires.forEach((s) => {
+            const wire = wiringManager.recreateWire(s, { deferRender: true });
+            if (wire && s.markerNumber == null) {
+                wireMarkerManager?.assignNumber?.(wire);
+                s.markerNumber = wire.markerNumber;
+            }
+        });
+
+        railManager.guideLineManager?.updateFromRails?.();
 
         await new Promise(requestAnimationFrame);
 
@@ -27207,7 +27669,6 @@ class PasteCommand extends SceneCommand {
         });
 
         wiringManager.renderWires();
-        railManager.guideLineManager?.updateFromRails?.();
 
         if (moduleMarkerManager) {
             snapshots.rails.forEach((r) => {
@@ -27870,72 +28331,7 @@ window.renumberAllMarkers = renumberAllMarkers;
 console.log('[Markers] ModuleMarkerManager зарегистрирован');
 
 /* ╔══════════════════════════════════════════════════════════════════════╗
-   ║                  ════ КОНЕЦ ИСХОДНОГО КОДА ════                      ║
-   ║  ──────────────────────────────────────────────────────────────────  ║
-   ║  Полное оглавление файла:                                            ║
-   ║                                                                      ║
-   ║   ── HTML / <head> ──                                                ║
-   ║    1. base.css                                                       ║
-   ║    2. viewport.css — Рабочая область                                 ║
-   ║                                                                      ║
-   ║   ── CSS ──                                                          ║
-   ║    03. svg-layers.css — SVG-слои                                     ║
-   ║    04. wires.css — Пути проводов                                     ║
-   ║    05. wire-tooltip.css — Всплывающая подсказка                      ║
-   ║    06. context-menu.css — Контекстные меню                           ║
-   ║    07. terminals.css — Клеммы, теги, цвета                           ║
-   ║    08. tools.css — Инструменты проводки                              ║
-   ║    09. estimate.css — Таблица сметы и скрытая таблица схемы          ║
-   ║   10. modal.css — Модальные окна                                     ║
-   ║   11. layers.css — Панель слоёв                                      ║
-   ║   12. favorites.css — Избранные модули                               ║
-   ║   13. selection.css — Прямоугольник выделения рамкой                 ║
-   ║   14. din-rails.css — DIN-рейки v2                                   ║
-   ║   15. modules-v2.css — Модули v2                                     ║
-   ║   16. module-selector.css — UI селектора модулей                     ║
-   ║   17. modals.html — Модальные окна                                   ║
-   ║   18. workspace.html — Рабочая область                               ║
-   ║   19. sidebar.html — Боковая панель                                  ║
-   ║   20. config.js — Глобальные константы приложения                    ║
-   ║   21. utils.js — Утилиты и планировщик кадров                        ║
-   ║   22. globals.js — Глобальные DOM-ссылки и переменные                ║
-   ║   23. viewport-controls.js — Pan, Zoom и преобразование координат    ║
-   ║   24. din-rail-manager.js — Менеджер DIN-реек                        ║
-   24.5 din-rail-manager-extensions.js — Helpers для Undo/Redo
-   ║   25. selection-manager.js — Единая система выделения                ║
-   ║   26. modules-database.js — База данных модулей v2                   ║
-   ║   27. module-manager.js — Менеджер модулей                           ║
-   27.5 module-manager-extensions.js — Helpers для Undo/Redo
-   ║   28. tag-manager.js — Менеджер тегов клемм                          ║
-   ║   29. wiring-manager.js — Система проводки                           ║
-   29.5 wiring-manager-extensions.js — Helpers для Undo/Redo 
-   ║   30. wire-marker-manager.js — Маркеры на проводах                   ║
-   ║   31. guide-line-manager.js — Направляющие для маршрутизации         ║
-   ║   32. module-selector.js — UI селектора модулей                      ║
-   ║   33. din-rail-selector.js — UI селектора DIN-реек                   ║                            ║
-   ║   36. layers-ui.js — UI слоёв                                        ║
-   ║   37. favorites-ui.js — UI избранного                                ║
-   ║   38. module-context-menu.js — Контекстное меню модуля               ║
-   ║   39. wire-props-modal.js — Модалка свойств провода                  ║
-   ║   40. wire-context-menu.js — Контекстное меню провода                ║
-   ║   41. wire-tools-ui.js — Инструменты проводки                        ║
-   ║   42. estimate.js — Генерация сметы                                  ║
-   ║   43. fps-counter.js — Счётчик FPS                                   ║
-   ║   44. pdf-export.js — Экспорт проекта в PDF                          ║
-   ║   46. app.js — Точка входа приложения                                ║
-   ║   47. project-validator.js — Валидация загружаемых проектов          ║
-   ║   48. project-io.js — Сохранение и загрузка проекта                  ║
-   ║   49. download-json.js — Утилита скачивания JSON                     ║
-   ║   50. project-serializer.js — Сериализация проекта в JSON      
-   51. БЛОК: Базовая команда (Command Pattern)       
-   52. БЛОК: Команды создания/удаления (этап 2B-1)
-   52.5 БЛОК: Команды для проводов (этап 2C)
-    53. БЛОК: Actions (фасад действий приложения) — реализация 
-    53.5 history-indicator.js — Плавающий индикатор Undo/Redo
-   ║  ──────────────────────────────────────────────────────────────────  ║
-   ║  💡 Совет: используйте Ctrl+F с номером блока ("28.") для быстрой    ║
-   ║     навигации между разделами.                                       
-   19070║19099 19055 19118 19005 18988 19084 19138 19450 19926 20013 20100 20378 20210 23511 23829 24180 24445 26237 26453
+   19070║19099 19055 19118 19005 18988 19084 19138 19450 19926 20013 20100 20378 20210 23511 23829 24180 24445 26237 26453 27937 28098
    ╚══════════════════════════════════════════════════════════════════════╝ */
 </script>
 <div id="autosave-indicator"></div>
