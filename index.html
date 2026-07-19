@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4.13.10</title>
+    <title>Конструктор Щита v4111</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -21064,6 +21064,10 @@ async function generateProfessionalPDF() {
         if (guideLayer) guideLayer.style.display = 'none';
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
 
+        // Важно: перед экспортом принудительно синхронизируем корпус щита
+        // с актуальными координатами реек/модулей.
+        window.ShieldCabinetLayer?.render?.();
+
         void workspace.offsetWidth;
 
         // 3. Замеряем активную область В ИСХОДНЫХ координатах
@@ -21151,17 +21155,25 @@ async function generateProfessionalPDF() {
         const contentW = (maxRight  - minLeft) + PADDING * 2;
         const contentH = (maxBottom - minTop)  + PADDING * 2;
 
-        // 4. ФИЗИЧЕСКИ сдвигаем модули и рейки
-        document.querySelectorAll('#workspace > .module-v2, #workspace > .din-rail-v2').forEach(el => {
+        // 4. ФИЗИЧЕСКИ сдвигаем модули, рейки и части корпуса щита
+        document.querySelectorAll(
+            '#workspace > .module-v2, ' +
+            '#workspace > .din-rail-v2, ' +
+            '#workspace #shield-cabinet-layer .shield-cabinet-part'
+        ).forEach(el => {
             const origLeft = el.style.left;
             const origTop  = el.style.top;
             movedElements.push({ el, origLeft, origTop });
-            
+
             const newLeft = (parseFloat(origLeft) || 0) + shiftX;
             const newTop  = (parseFloat(origTop)  || 0) + shiftY;
             el.style.left = newLeft + 'px';
             el.style.top  = newTop  + 'px';
         });
+
+        // После сдвига ещё раз пересчитываем корпус —
+        // чтобы он точно совпал с новой геометрией реек/модулей.
+        window.ShieldCabinetLayer?.render?.();
 
         // 5. SVG: меняем width/height/viewBox
         // combbusLayer — слой гребёнок-сущностей, combLayer — провода-гребёнки.
@@ -21401,6 +21413,8 @@ async function generateProfessionalPDF() {
                 document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
 
                 updateWorkspaceTransform();
+                / Возвращаем синхронность корпуса щита после отката состояния
+                window.ShieldCabinetLayer?.render?.();
             } catch (restoreErr) {
                 console.error('Ошибка при восстановлении состояния после PDF:', restoreErr);
             }
