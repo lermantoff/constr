@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4131</title>
+    <title>Конструктор Щита v41</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -20992,6 +20992,7 @@ async function generateProfessionalPDF() {
     let savedSvgState = [];
     let saved = null;
     let savedGuideDisplay = null;
+    let pdfExportFreezeStyle = null;
      const markersLayer = document.getElementById('markers-layer');
     const combbusLayer = document.getElementById('combbus-layer');
     const combLayer    = document.getElementById('comb-layer');
@@ -21063,6 +21064,29 @@ async function generateProfessionalPDF() {
         viewport.style.backgroundImage  = 'none';
         if (guideLayer) guideLayer.style.display = 'none';
         document.querySelectorAll('.pivot').forEach(p => p.style.display = 'none');
+
+        // ВАЖНО:
+        // На время экспорта убираем transition/animation, иначе html2canvas
+        // может поймать промежуточное состояние после смещения реек.
+        pdfExportFreezeStyle = document.createElement('style');
+        pdfExportFreezeStyle.id = 'pdf-export-freeze-style';
+        pdfExportFreezeStyle.textContent = `
+            #workspace .din-rail-v2,
+            #workspace .din-rail-v2 *,
+            #workspace .module-v2,
+            #workspace .module-v2 *,
+            #workspace #shield-cabinet-layer,
+            #workspace #shield-cabinet-layer *,
+            #workspace svg,
+            #workspace svg * {
+                transition: none !important;
+                animation: none !important;
+            }
+        `;
+        document.head.appendChild(pdfExportFreezeStyle);
+
+        // Форсируем применение стилей до любых геометрических расчётов
+        void document.body.offsetWidth;
 
         // Важно: перед экспортом принудительно синхронизируем корпус щита
         // с актуальными координатами реек/модулей.
@@ -21171,9 +21195,18 @@ async function generateProfessionalPDF() {
             el.style.top  = newTop  + 'px';
         });
 
+        // После физического сдвига форсируем reflow,
+        // чтобы все координаты реально применились без анимаций.
+        void workspace.offsetWidth;
+        await new Promise(requestAnimationFrame);
+
         // После сдвига ещё раз пересчитываем корпус —
-        // чтобы он точно совпал с новой геометрией реек/модулей.
+        // теперь уже по финальной геометрии.
         window.ShieldCabinetLayer?.render?.();
+
+        // И ещё один кадр на стабилизацию перед html2canvas
+        void workspace.offsetWidth;
+        await new Promise(requestAnimationFrame);
 
         // 5. SVG: меняем width/height/viewBox
         // combbusLayer — слой гребёнок-сущностей, combLayer — провода-гребёнки.
@@ -21374,7 +21407,11 @@ async function generateProfessionalPDF() {
                     input.style.visibility = '';
                 });
                 labelStubs = [];
-
+                    if (pdfExportFreezeStyle?.parentNode) {
+                    pdfExportFreezeStyle.parentNode.removeChild(pdfExportFreezeStyle);
+                }
+                pdfExportFreezeStyle = null;
+                
                 // Восстановление координат модулей и реек
                 movedElements.forEach(({ el, origLeft, origTop }) => {
                     el.style.left = origLeft;
