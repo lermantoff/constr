@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Конструктор Щита v4111</title>
+    <title>Конструктор Щита v4131</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -21413,7 +21413,6 @@ async function generateProfessionalPDF() {
                 document.querySelectorAll('.pivot').forEach(p => p.style.display = '');
 
                 updateWorkspaceTransform();
-                / Возвращаем синхронность корпуса щита после отката состояния
                 window.ShieldCabinetLayer?.render?.();
             } catch (restoreErr) {
                 console.error('Ошибка при восстановлении состояния после PDF:', restoreErr);
